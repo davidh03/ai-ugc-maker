@@ -1,9 +1,6 @@
 import { useState } from 'react';
 
-const CATEGORIES = ['image', 'video', 'music', 'other'];
-
-export default function AssetUpload({ onAssetsChange }) {
-  const [assets, setAssets] = useState([]);
+export default function AssetUpload({ assets = [], onAssetsChange }) {
   const [uploading, setUploading] = useState(false);
 
   const handleUpload = async (e) => {
@@ -27,7 +24,7 @@ export default function AssetUpload({ onAssetsChange }) {
           body: file,
         });
         const asset = await res.json();
-        setAssets(prev => [...prev, asset]);
+        onAssetsChange?.([...assets, asset]);
       }
     } finally {
       setUploading(false);
@@ -36,23 +33,23 @@ export default function AssetUpload({ onAssetsChange }) {
   };
 
   const toggleRequired = (i) => {
-    setAssets(prev => prev.map((a, idx) => idx === i ? { ...a, required: a.required === false } : a));
+    onAssetsChange?.(assets.map((a, idx) => idx === i ? { ...a, required: a.required === false } : a));
   };
 
   const removeAsset = (i) => {
-    setAssets(prev => prev.filter((_, idx) => idx !== i));
+    onAssetsChange?.(assets.filter((_, idx) => idx !== i));
   };
 
   const chip = (a, i) => (
-    <div key={a.id || i} style={{
+    <div key={a.id || a.filename || i} style={{
       padding: '4px 10px', backgroundColor: '#1a1a1a', borderRadius: 6,
       fontSize: 12, color: '#ccc', display: 'flex', alignItems: 'center', gap: 6,
     }}>
       <span style={{ color: a.category === 'image' ? '#3b82f6' : a.category === 'video' ? '#a855f7' : a.category === 'music' ? '#22c55e' : '#888' }}>
         {a.category === 'image' ? '🖼' : a.category === 'video' ? '🎬' : a.category === 'music' ? '🎵' : '📄'}
       </span>
-      {a.originalName}
-      <span style={{ color: '#666' }}>{Math.round(a.size/1024)}KB</span>
+      {a.originalName || a.filename}
+      <span style={{ color: '#666' }}>{Math.round((a.size || 0)/1024)}KB</span>
       <button
         type="button"
         onClick={() => toggleRequired(i)}
