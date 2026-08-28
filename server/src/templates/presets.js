@@ -8,18 +8,22 @@ export const presets = {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { width: 1920px; height: 1080px; background: #0a0a0a; overflow: hidden; }
-  .slide { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; position: absolute; top: 0; left: 0; }
+  .clip { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; position: absolute; top: 0; left: 0; }
   .text { color: #fff; font-family: system-ui, sans-serif; font-size: 72px; text-align: center; padding: 80px; line-height: 1.2; }
   .tagline { color: #aaa; font-size: 32px; margin-top: 24px; }
 </style>
 </head>
 <body>
-  <div class="slide" data-track-index="0" data-start="0" data-duration="${durationSec}">
-    <div class="text">
+  <div class=clip data-composition-id=product data-width=1920 data-height=1080 data-track-index=0 data-start=0 data-duration=${durationSec}>
+    <div class=text>
       ${brief}
-      <div class="tagline">${brief}</div>
+      <div class=tagline>${brief}</div>
     </div>
   </div>
+  <script>
+    window.__timelines = window.__timelines || {};
+    window.__timelines['product'] = { duration: ${durationSec}, fps: 30 };
+  </script>
 </body>
 </html>`
   },
@@ -33,19 +37,23 @@ export const presets = {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { width: 1920px; height: 1080px; background: linear-gradient(135deg, #1a1a2e, #16213e); overflow: hidden; }
-  .slide { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; position: absolute; top: 0; left: 0; }
+  .clip { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; position: absolute; top: 0; left: 0; }
   .content { color: #fff; font-family: system-ui, sans-serif; text-align: center; padding: 120px; }
   .title { font-size: 80px; font-weight: bold; margin-bottom: 32px; }
   .body { font-size: 36px; color: #ccc; line-height: 1.6; }
 </style>
 </head>
 <body>
-  <div class="slide" data-track-index="0" data-start="0" data-duration="${durationSec}">
-    <div class="content">
-      <div class="title">${brief}</div>
-      <div class="body">${brief}</div>
+  <div class=clip data-composition-id=explainer data-width=1920 data-height=1080 data-track-index=0 data-start=0 data-duration=${durationSec}>
+    <div class=content>
+      <div class=title>${brief}</div>
+      <div class=body>${brief}</div>
     </div>
   </div>
+  <script>
+    window.__timelines = window.__timelines || {};
+    window.__timelines['explainer'] = { duration: ${durationSec}, fps: 30 };
+  </script>
 </body>
 </html>`
   },
@@ -59,14 +67,18 @@ export const presets = {
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { width: 1080px; height: 1920px; background: #000; overflow: hidden; }
-  .slide { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; position: absolute; top: 0; left: 0; }
+  .clip { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; position: absolute; top: 0; left: 0; }
   .text { color: #fff; font-family: system-ui, sans-serif; font-size: 64px; text-align: center; padding: 60px; line-height: 1.3; }
 </style>
 </head>
 <body>
-  <div class="slide" data-track-index="0" data-start="0" data-duration="${durationSec}">
-    <div class="text">${brief}</div>
+  <div class=clip data-composition-id=social data-width=1080 data-height=1920 data-track-index=0 data-start=0 data-duration=${durationSec}>
+    <div class=text>${brief}</div>
   </div>
+  <script>
+    window.__timelines = window.__timelines || {};
+    window.__timelines['social'] = { duration: ${durationSec}, fps: 30 };
+  </script>
 </body>
 </html>`
   },

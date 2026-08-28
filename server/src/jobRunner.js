@@ -44,7 +44,13 @@ export async function runJob(job) {
     // 4) move output to final location
     const outputDir = path.join(config.dataDir, 'jobs', job.id);
     const finalOutput = path.join(outputDir, 'output.mp4');
-    const tmpOutput = path.join(compositionDir, 'output.mp4');
+    // HyperFrames outputs to renders/ subdirectory
+    const rendersDir = path.join(compositionDir, 'renders');
+    let tmpOutput = path.join(compositionDir, 'output.mp4');
+    if (!existsSync(tmpOutput) && existsSync(rendersDir)) {
+      const files = require('fs').readdirSync(rendersDir).filter(f => f.endsWith('.mp4'));
+      if (files.length > 0) tmpOutput = path.join(rendersDir, files[0]);
+    }
 
     if (existsSync(tmpOutput)) {
       mkdirSync(outputDir, { recursive: true });
