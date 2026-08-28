@@ -45,6 +45,32 @@ export default function JobDetail() {
       {job.status === 'done' && (
         <div style={{ marginTop: 16 }}>
           <VideoPlayer jobId={job.id} />
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12 }}>
+            <a
+              href={'/api/jobs/' + job.id + '/output?download=1'}
+              style={{
+                padding: '8px 18px',
+                backgroundColor: '#3b82f6',
+                color: '#fff',
+                borderRadius: 6,
+                textDecoration: 'none',
+                fontSize: 14,
+                fontWeight: 500,
+              }}
+            >
+              ⬇ Download MP4
+            </a>
+            {job.assetsUsed && job.assetsUsed.length > 0 && (
+              <span style={{ fontSize: 13, color: '#6ee7a0' }}>
+                ✓ {job.assetsUsed.length} asset{job.assetsUsed.length > 1 ? 's' : ''} used in this video
+              </span>
+            )}
+            {job.assets && job.assets.length > 0 && (!job.assetsUsed || job.assetsUsed.length === 0) && (
+              <span style={{ fontSize: 13, color: '#fbbf24' }}>
+                ⚠ {job.assets.length} asset(s) uploaded but none referenced in the composition
+              </span>
+            )}
+          </div>
         </div>
       )}
 

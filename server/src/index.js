@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { createJob } from './jobs.js';
 import { loadJobs, upsertJob } from './store.js';
 import { runJob, cancelJob } from './jobRunner.js';
@@ -83,7 +83,7 @@ app.get('/api/assets', (_req, res) => {
     if (!existsSync(dir)) continue;
     for (const f of readdirSync(dir)) {
       const fp = path.join(dir, f);
-      const stat = require('fs').statSync(fp);
+      const stat = statSync(fp);
       assets.push({ filename: f, category: cat, size: stat.size, path: `assets/${cat}/${f}` });
     }
   }
@@ -117,7 +117,13 @@ app.get('/api/jobs/:id', (req, res) => {
 app.get('/api/jobs/:id/output', (req, res) => {
   const job = loadJobs().find(j => j.id === req.params.id);
   if (!job || !job.outputRel) return res.status(404).json({ error: 'no output yet' });
-  res.sendFile(path.join(config.dataDir, job.outputRel));
+  const file = path.join(config.dataDir, job.outputRel);
+  if (!existsSync(file)) return res.status(404).json({ error: 'output file missing' });
+  if (req.query.download) {
+    res.setHeader('Content-Disposition', 'attachment; filename="' + job.id + '.mp4"');
+    res.setHeader('Content-Type', 'video/mp4');
+  }
+  res.sendFile(file);
 });
 
 app.post('/api/jobs/:id/cancel', (req, res) => {

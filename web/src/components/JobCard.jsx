@@ -29,7 +29,17 @@ export default function JobCard({ job }) {
           {job.durationSec}s · {job.style} · {timeAgo(job.createdAt)}
         </div>
       </div>
-      <div style={{ marginLeft: 12 }}>
+      <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+        {job.status === 'done' && (
+          <a
+            href={'/api/jobs/' + job.id + '/output?download=1'}
+            onClick={e => e.stopPropagation()}
+            title="Download MP4"
+            style={{ color: '#3b82f6', textDecoration: 'none', fontSize: 18 }}
+          >
+            ⬇
+          </a>
+        )}
         <JobStatusBadge status={job.status} />
       </div>
     </Link>
