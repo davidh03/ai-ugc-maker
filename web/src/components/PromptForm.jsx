@@ -63,13 +63,14 @@ export default function PromptForm({ onSubmit, loading }) {
   }, [brief, durationSec, style, music, agent, model, assets]);
 
   useEffect(() => { getModels().then(setModels).catch(() => {}); }, []);
-  // Prefer a known-good free Zen model; only fall back to the first in the list.
+  // Keep the selected model valid against the live list: prefer a known-good
+  // free Zen model, and if a saved model is stale (e.g. opencode-go/* from
+  // before the Zen migration) reset it instead of leaving a dead selection.
   useEffect(() => {
-    if (models.length && !model) {
-      const preferred = ['opencode/mimo-v2.5-free', 'opencode/hy3-free', 'opencode/big-pickle']
-        .find(id => models.some(m => m.id === id));
-      setModel(preferred || models[0].id);
-    }
+    if (!models.length) return;
+    const preferred = ['opencode/mimo-v2.5-free', 'opencode/hy3-free', 'opencode/big-pickle']
+      .find(id => models.some(m => m.id === id)) || models[0].id;
+    if (!model || !models.some(m => m.id === model)) setModel(preferred);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [models]);
 
