@@ -1,7 +1,7 @@
 const BASE = '/api';
 
 export async function fetchJson(path, options = {}) {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(BASE + path, {
     headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options,
   });
@@ -13,24 +13,12 @@ export async function fetchJson(path, options = {}) {
 }
 
 export async function postJob(data) {
-  return fetchJson('/jobs', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
+  return fetchJson('/jobs', { method: 'POST', body: JSON.stringify(data) });
 }
 
-export async function getJobs() {
-  return fetchJson('/jobs');
-}
+export async function getJobs() { return fetchJson('/jobs'); }
+export async function getJob(id) { return fetchJson('/jobs/' + id); }
+export async function cancelJob(id) { return fetchJson('/jobs/' + id + '/cancel', { method: 'POST' }); }
+export async function getModels() { return fetchJson('/models'); }
 
-export async function getJob(id) {
-  return fetchJson(`/jobs/${id}`);
-}
-
-export async function cancelJob(id) {
-  return fetchJson(`/jobs/${id}/cancel`, { method: 'POST' });
-}
-
-export function getOutputUrl(id) {
-  return `${BASE}/jobs/${id}/output`;
-}
+export function getOutputUrl(id) { return BASE + '/jobs/' + id + '/output'; }

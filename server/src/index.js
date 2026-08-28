@@ -68,3 +68,23 @@ app.get('/{*splat}', (_req, res) => {
 app.listen(config.port, config.host, () => {
   console.log('ai-ugc-maker listening on http://' + config.host + ':' + config.port);
 });
+
+// Models endpoint — lists available OpenCode models
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const execFileP = promisify(execFile);
+
+app.get('/api/models', async (_req, res) => {
+  try {
+    const { stdout } = await execFileP('/home/clez/.opencode/bin/opencode', ['models'], {
+      env: { ...process.env, PATH: '/home/clez/.opencode/bin:' + process.env.PATH },
+    });
+    const models = stdout.trim().split('\n').filter(Boolean).map(m => ({
+      id: m,
+      name: m.split('/').pop(),
+    }));
+    res.json(models);
+  } catch (err) {
+    res.json([{ id: 'opencode/mimo-v2.5-free', name: 'mimo-v2.5-free' }]);
+  }
+});

@@ -63,7 +63,7 @@ export const agentComposer = {
         agentEnv.OPENCODE_API_KEY = envVars.OPENCODE_API_KEY;
       }
 
-      const child = spawn(agentBin, ['--prompt', prompt, '--auto'], {
+      const child = spawn(agentBin, ['--prompt', prompt, '--auto', '--model', job.model || 'opencode/mimo-v2.5-free'], {
         cwd: jobDir,
         stdio: ['ignore', 'pipe', 'pipe'],
         env: agentEnv,
