@@ -27,6 +27,15 @@ export default function JobCard({ job }) {
         </div>
         <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
           {job.durationSec}s · {job.style} · {timeAgo(job.createdAt)}
+          {job.assets && job.assets.length > 0 && (
+            <span style={{ color: '#6ee7a0', marginLeft: 8 }}>🎞 {job.assets.length}</span>
+          )}
+          {job.assetsUsed && job.assetsUsed.length > 0 && (
+            <span style={{ color: '#3b82f6', marginLeft: 4 }}>✓ used {job.assetsUsed.length}</span>
+          )}
+          {job.requiredAssetsNotUsed && job.requiredAssetsNotUsed.length > 0 && (
+            <span style={{ color: '#ef4444', marginLeft: 4 }}>⚠ req missing</span>
+          )}
         </div>
       </div>
       <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 10 }}>

@@ -8,6 +8,9 @@ export default function AssetUpload({ assets = [], onAssetsChange }) {
     if (!files.length) return;
     setUploading(true);
     try {
+      // Sequential uploads, each applied on top of the LATEST state via a
+      // functional update — fixes the stale-closure race where picking
+      // multiple files at once dropped earlier ones.
       for (const file of files) {
         const category = file.type.startsWith('image/') ? 'image'
           : file.type.startsWith('video/') ? 'video'
@@ -19,12 +22,12 @@ export default function AssetUpload({ assets = [], onAssetsChange }) {
             'Content-Type': file.type,
             'X-Filename': file.name,
             'X-Category': category,
-            'X-Required': 'true', // assets default to REQUIRED (must be in the video)
+            'X-Required': 'true',
           },
           body: file,
         });
         const asset = await res.json();
-        onAssetsChange?.([...assets, asset]);
+        onAssetsChange(prev => [...prev, asset]);
       }
     } finally {
       setUploading(false);
@@ -33,11 +36,11 @@ export default function AssetUpload({ assets = [], onAssetsChange }) {
   };
 
   const toggleRequired = (i) => {
-    onAssetsChange?.(assets.map((a, idx) => idx === i ? { ...a, required: a.required === false } : a));
+    onAssetsChange(prev => prev.map((a, idx) => idx === i ? { ...a, required: a.required === false } : a));
   };
 
   const removeAsset = (i) => {
-    onAssetsChange?.(assets.filter((_, idx) => idx !== i));
+    onAssetsChange(prev => prev.filter((_, idx) => idx !== i));
   };
 
   const chip = (a, i) => (

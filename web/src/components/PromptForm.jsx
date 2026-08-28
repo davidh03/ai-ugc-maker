@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getModels } from '../api/client';
 import AssetUpload from './AssetUpload';
 
@@ -33,22 +33,30 @@ export default function PromptForm({ onSubmit, loading }) {
   const [model, setModel] = useState('');
   const [models, setModels] = useState([]);
   const [assets, setAssets] = useState([]);
+  const hydrated = useRef(false);
 
-  // Restore last-used settings + asset chips on mount
+  // Functional-update-safe setAssets: AssetUpload passes updater fns.
+  const updateAssets = (updater) => setAssets(prev => typeof updater === 'function' ? updater(prev) : updater);
+
+  // Restore last-used settings + asset chips on mount (first pass only)
   useEffect(() => {
     const draft = loadDraft();
-    if (!draft) return;
-    if (typeof draft.brief === 'string') setBrief(draft.brief);
-    if (typeof draft.durationSec === 'number') setDurationSec(draft.durationSec);
-    if (STYLES.some(s => s.value === draft.style)) setStyle(draft.style);
-    if (typeof draft.music === 'boolean') setMusic(draft.music);
-    if (AGENTS.some(a => a.value === draft.agent)) setAgent(draft.agent);
-    if (typeof draft.model === 'string') setModel(draft.model);
-    if (Array.isArray(draft.assets) && draft.assets.length > 0) setAssets(draft.assets);
+    if (draft) {
+      if (typeof draft.brief === 'string') setBrief(draft.brief);
+      if (typeof draft.durationSec === 'number') setDurationSec(draft.durationSec);
+      if (STYLES.some(s => s.value === draft.style)) setStyle(draft.style);
+      if (typeof draft.music === 'boolean') setMusic(draft.music);
+      if (AGENTS.some(a => a.value === draft.agent)) setAgent(draft.agent);
+      if (typeof draft.model === 'string') setModel(draft.model);
+      if (Array.isArray(draft.assets) && draft.assets.length > 0) setAssets(draft.assets);
+    }
+    hydrated.current = true;
   }, []);
 
-  // Persist on every change so a reload never loses the form
+  // Persist on every change — but never on the very first render, so the
+  // restore above can't be clobbered by an empty-state write.
   useEffect(() => {
+    if (!hydrated.current) return;
     try {
       localStorage.setItem(LS_KEY, JSON.stringify({ brief, durationSec, style, music, agent, model, assets }));
     } catch {}
@@ -84,7 +92,7 @@ export default function PromptForm({ onSubmit, loading }) {
 
   return (
     <form onSubmit={handleSubmit} style={{ marginBottom: 24 }}>
-      <AssetUpload onAssetsChange={setAssets} assets={assets} />
+      <AssetUpload onAssetsChange={updateAssets} assets={assets} />
       <textarea
         value={brief}
         onChange={e => setBrief(e.target.value)}
@@ -118,6 +126,11 @@ export default function PromptForm({ onSubmit, loading }) {
         <label style={{ fontSize: 13, color: '#aaa', display: 'flex', alignItems: 'center', gap: 4 }}>
           <input type="checkbox" checked={music} onChange={e => setMusic(e.target.checked)} /> Music
         </label>
+        {assets.length > 0 && (
+          <span style={{ fontSize: 12, color: '#6ee7a0', fontWeight: 600 }}>
+            ✓ {assets.length} asset{assets.length > 1 ? 's' : ''} will be attached
+          </span>
+        )}
         <button type="submit" disabled={loading || !brief.trim()} style={{ marginLeft: 'auto', padding: '8px 20px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
           {loading ? 'Creating...' : 'Create Video'}
         </button>
