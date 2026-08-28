@@ -1,0 +1,6 @@
+node_modules/
+server/data/
+web/dist/
+*.mp4
+.env
+.DS_Store
