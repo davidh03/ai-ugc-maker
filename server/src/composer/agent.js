@@ -29,19 +29,16 @@ export const agentComposer = {
     const agentBin = AGENT_BINS[agentName];
     if (!agentBin || !existsSync(agentBin)) throw new Error('Agent not found: ' + agentName);
 
-    // Build asset list for prompt
     const assetLines = (job.assets || []).map(a =>
-      `- ${a.category}: /assets/${a.category}/${a.filename} (${a.originalName}, ${Math.round(a.size/1024)}KB)`
-    ).join('\n');
+      a.category + ': assets/' + a.category + '/' + a.filename
+    ).join(', ');
 
-    const prompt = 'Write a HyperFrames video composition to ' + jobDir + '/index.html.\n' +
+    const prompt = 'Write a HyperFrames video composition to index.html in this directory.\n' +
       'Brief: ' + job.brief + '\n' +
       'Duration: ' + job.durationSec + 's\n' +
-      'Style: ' + job.style + '\n\n' +
-      (assetLines ? 'Available assets:\n' + assetLines + '\n\nUse these assets in the composition where appropriate (images as <img>, video as <video>, music as <audio>).\n\n' : '') +
-      'Requirements: valid HyperFrames HTML with data-composition-id, data-width=1920, data-height=1080, ' +
-      'class=clip on timed divs, data-track-index/data-start/data-duration, window.__timelines, inline CSS only. ' +
-      'Write the file directly.';
+      'Style: ' + job.style + '\n' +
+      (assetLines ? 'Assets: ' + assetLines + '\n' : '') +
+      'HTML must have: data-composition-id, data-width=1920, data-height=1080, class=clip, data-track-index, data-start, data-duration, window.__timelines. Inline CSS only.';
 
     writeFileSync(path.join(jobDir, 'prompt.txt'), prompt);
 
