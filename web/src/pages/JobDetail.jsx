@@ -65,6 +65,11 @@ export default function JobDetail() {
                 ✓ {job.assetsUsed.length} asset{job.assetsUsed.length > 1 ? 's' : ''} used in this video
               </span>
             )}
+            {job.requiredAssetsNotUsed && job.requiredAssetsNotUsed.length > 0 && (
+              <span style={{ fontSize: 13, color: '#ef4444' }} title={job.requiredAssetsNotUsed.join(', ')}>
+                ⚠ REQUIRED asset(s) missing: {job.requiredAssetsNotUsed.length}
+              </span>
+            )}
             {job.assets && job.assets.length > 0 && (!job.assetsUsed || job.assetsUsed.length === 0) && (
               <span style={{ fontSize: 13, color: '#fbbf24' }}>
                 ⚠ {job.assets.length} asset(s) uploaded but none referenced in the composition

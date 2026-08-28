@@ -30,7 +30,7 @@ function isTransientGatewayError(output) {
 
 // Copy the job's uploaded assets into the job workspace so the agent can
 // reference them by relative path in the composition. Returns the list of
-// usable assets with their relative paths.
+// usable assets with their relative paths. `required` defaults to true.
 function stageAssets(job, jobDir) {
   const assets = (job.assets || []).filter(a => a && a.filename && a.path);
   if (assets.length === 0) return [];
@@ -41,7 +41,7 @@ function stageAssets(job, jobDir) {
     const src = path.join(DATA_DIR, a.path);
     if (!existsSync(src)) continue;
     const dest = path.join(assetDir, a.filename);
-    try { copyFileSync(src, dest); staged.push({ filename: a.filename, category: a.category, rel: 'assets/' + a.filename }); }
+    try { copyFileSync(src, dest); staged.push({ filename: a.filename, category: a.category, rel: 'assets/' + a.filename, required: a.required !== false }); }
     catch (e) { console.warn('asset copy failed:', a.path, e.message); }
   }
   return staged;
@@ -84,9 +84,17 @@ export const agentComposer = {
 
     let prompt = 'Create index.html: ' + job.brief + '. ' + job.durationSec + 's ' + job.style + ' video. 1920x1080. Use GSAP animations. Include data-composition-id, data-width, data-height, class=clip, data-track-index, data-start, data-duration attributes on divs. Add window.__timelines.';
     if (staged.length > 0) {
-      prompt += ' Use these uploaded assets (relative paths from the working directory): ' +
-        staged.map(a => a.rel + ' (' + a.category + ')').join(', ') +
-        '. Reference them in the composition (e.g. <img src="' + staged[0].rel + '"> for images). Animate their entrance rather than ignoring them.';
+      const req = staged.filter(a => a.required);
+      const opt = staged.filter(a => !a.required);
+      if (req.length > 0) {
+        prompt += ' REQUIRED assets (the video MUST include these, do not skip them; relative paths from the working directory): ' +
+          req.map(a => a.rel + ' (' + a.category + ')').join(', ') + '.';
+      }
+      if (opt.length > 0) {
+        prompt += ' OPTIONAL assets (use only if they fit the video naturally; relative paths): ' +
+          opt.map(a => a.rel + ' (' + a.category + ')').join(', ') + '.';
+      }
+      prompt += ' Reference them in the composition (e.g. <img src="' + staged[0].rel + '"> for the first image). Animate REQUIRED assets prominently rather than ignoring them.';
     }
     writeFileSync(path.join(jobDir, 'prompt.txt'), prompt);
 
@@ -101,12 +109,13 @@ export const agentComposer = {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         await runOnce(agentBin, args, jobDir, model);
-        // Record which staged assets actually made it into the composition.
+        // Record which staged assets actually made it into the composition,
+        // and flag required ones that were ignored.
         if (staged.length > 0) {
           const html = readFileSync(path.join(jobDir, 'index.html'), 'utf8');
-          job.assetsUsed = staged
-            .filter(a => html.includes(a.filename))
-            .map(a => a.filename);
+          const used = staged.filter(a => html.includes(a.filename));
+          job.assetsUsed = used.map(a => a.filename);
+          job.requiredAssetsNotUsed = staged.filter(a => a.required && !html.includes(a.filename)).map(a => a.filename);
         }
         return jobDir;
       } catch (err) {

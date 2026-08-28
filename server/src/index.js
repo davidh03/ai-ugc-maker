@@ -55,6 +55,7 @@ app.post('/api/assets', express.raw({ type: '*/*', limit: '50mb' }), (req, res) 
   try {
     const filename = req.headers['x-filename'] || 'upload';
     const category = req.headers['x-category'] || 'other'; // image, video, music, other
+    const required = String(req.headers['x-required'] ?? 'true').toLowerCase() !== 'false'; // default: REQUIRED
     const id = crypto.randomUUID().slice(0, 8);
     const ext = path.extname(filename);
     const safeName = `${id}-${filename.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
@@ -67,6 +68,7 @@ app.post('/api/assets', express.raw({ type: '*/*', limit: '50mb' }), (req, res) 
       filename: safeName,
       originalName: filename,
       category,
+      required,
       size: req.body.length,
       path: `assets/${category}/${safeName}`,
       uploadedAt: Date.now(),
