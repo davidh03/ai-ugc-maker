@@ -1,10 +1,13 @@
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { createJob } from './jobs.js';
 import { loadJobs, upsertJob } from './store.js';
 import { runJob, cancelJob } from './jobRunner.js';
 
+const execFileP = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const config = {
   host: process.env.HOST || '127.0.0.1',
@@ -15,6 +18,22 @@ const config = {
 const app = express();
 app.use(express.json());
 
+// Models endpoint
+app.get('/api/models', async (_req, res) => {
+  try {
+    const { stdout } = await execFileP('/home/clez/.opencode/bin/opencode', ['models'], {
+      env: { ...process.env, PATH: '/home/clez/.opencode/bin:' + process.env.PATH },
+    });
+    const models = stdout.trim().split('\n').filter(Boolean).map(m => ({
+      id: m, name: m.split('/').pop(),
+    }));
+    res.json(models);
+  } catch (err) {
+    res.json([{ id: 'opencode/mimo-v2.5-free', name: 'mimo-v2.5-free' }]);
+  }
+});
+
+// Jobs routes
 app.post('/api/jobs', (req, res) => {
   try {
     const job = createJob(req.body);
@@ -26,9 +45,7 @@ app.post('/api/jobs', (req, res) => {
   }
 });
 
-app.get('/api/jobs', (_req, res) => {
-  res.json(loadJobs());
-});
+app.get('/api/jobs', (_req, res) => { res.json(loadJobs()); });
 
 app.get('/api/jobs/:id', (req, res) => {
   const job = loadJobs().find(j => j.id === req.params.id);
@@ -39,8 +56,7 @@ app.get('/api/jobs/:id', (req, res) => {
 app.get('/api/jobs/:id/output', (req, res) => {
   const job = loadJobs().find(j => j.id === req.params.id);
   if (!job || !job.outputRel) return res.status(404).json({ error: 'no output yet' });
-  const filePath = path.join(config.dataDir, job.outputRel);
-  res.sendFile(filePath);
+  res.sendFile(path.join(config.dataDir, job.outputRel));
 });
 
 app.post('/api/jobs/:id/cancel', (req, res) => {
@@ -59,6 +75,7 @@ app.post('/api/jobs/:id/cancel', (req, res) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// SPA catch-all
 const distDir = path.join(__dirname, '..', '..', 'web', 'dist');
 app.use(express.static(distDir));
 app.get('/{*splat}', (_req, res) => {
@@ -66,25 +83,5 @@ app.get('/{*splat}', (_req, res) => {
 });
 
 app.listen(config.port, config.host, () => {
-  console.log('ai-ugc-maker listening on http://' + config.host + ':' + config.port);
-});
-
-// Models endpoint — lists available OpenCode models
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-const execFileP = promisify(execFile);
-
-app.get('/api/models', async (_req, res) => {
-  try {
-    const { stdout } = await execFileP('/home/clez/.opencode/bin/opencode', ['models'], {
-      env: { ...process.env, PATH: '/home/clez/.opencode/bin:' + process.env.PATH },
-    });
-    const models = stdout.trim().split('\n').filter(Boolean).map(m => ({
-      id: m,
-      name: m.split('/').pop(),
-    }));
-    res.json(models);
-  } catch (err) {
-    res.json([{ id: 'opencode/mimo-v2.5-free', name: 'mimo-v2.5-free' }]);
-  }
+  console.log('listening on ' + config.host + ':' + config.port);
 });
