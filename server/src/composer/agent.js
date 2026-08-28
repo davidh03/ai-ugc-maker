@@ -35,7 +35,7 @@ export const agentComposer = {
     writeFileSync(path.join(jobDir, 'prompt.txt'), prompt);
 
     const args = agentName === 'opencode'
-      ? ['run', prompt, '--model', job.model || 'opencode/mimo-v2.5']
+      ? ['run', prompt, '--model', job.model || 'opencode/mimo-v2.5', '--pure']
       : [prompt];
 
     return new Promise((resolve, reject) => {
