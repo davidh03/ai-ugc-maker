@@ -29,16 +29,8 @@ export const agentComposer = {
     const agentBin = AGENT_BINS[agentName];
     if (!agentBin || !existsSync(agentBin)) throw new Error('Agent not found: ' + agentName);
 
-    const assetLines = (job.assets || []).map(a =>
-      a.category + ': assets/' + a.category + '/' + a.filename
-    ).join(', ');
-
-    const prompt = 'Write a HyperFrames video composition to index.html in this directory.\n' +
-      'Brief: ' + job.brief + '\n' +
-      'Duration: ' + job.durationSec + 's\n' +
-      'Style: ' + job.style + '\n' +
-      (assetLines ? 'Assets: ' + assetLines + '\n' : '') +
-      'HTML must have: data-composition-id, data-width=1920, data-height=1080, class=clip, data-track-index, data-start, data-duration, window.__timelines. Inline CSS only.';
+    const assets = (job.assets || []).map(a => a.originalName).join(', ');
+    const prompt = 'Create index.html: ' + job.brief + '. ' + job.durationSec + 's ' + job.style + ' video. 1920x1080. Use GSAP animations. Include data-composition-id, data-width, data-height, class=clip, data-track-index, data-start, data-duration attributes on divs. Add window.__timelines.' + (assets ? ' Assets: ' + assets : '');
 
     writeFileSync(path.join(jobDir, 'prompt.txt'), prompt);
 
@@ -47,21 +39,16 @@ export const agentComposer = {
       : [prompt];
 
     return new Promise((resolve, reject) => {
-      const agentEnv = {
-        ...process.env,
-        PATH: (process.env.HOME || '/home/clez') + '/.opencode/bin:' + process.env.PATH,
-      };
+      const agentEnv = { ...process.env, PATH: (process.env.HOME || '/home/clez') + '/.opencode/bin:' + process.env.PATH };
       if (envVars.OPENCODE_API_KEY) agentEnv.OPENCODE_API_KEY = envVars.OPENCODE_API_KEY;
 
-      const child = spawn(agentBin, args, {
-        cwd: jobDir, stdio: ['ignore', 'pipe', 'pipe'], env: agentEnv,
-      });
+      const child = spawn(agentBin, args, { cwd: jobDir, stdio: ['ignore', 'pipe', 'pipe'], env: agentEnv });
       let stdout = '', stderr = '';
       child.stdout.on('data', d => stdout += d);
       child.stderr.on('data', d => stderr += d);
       child.on('close', code => {
         if (existsSync(path.join(jobDir, 'index.html'))) resolve(jobDir);
-        else reject(new Error('Agent exited ' + code + ': ' + (stderr || stdout).slice(0, 500)));
+        else reject(new Error('Agent exited ' + code + ': ' + (stderr || stdout).slice(0, 300)));
       });
       child.on('error', reject);
     });
