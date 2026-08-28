@@ -23,7 +23,14 @@ export default function PromptForm({ onSubmit, loading }) {
   const [assets, setAssets] = useState([]);
 
   useEffect(() => { getModels().then(setModels).catch(() => {}); }, []);
-  useEffect(() => { if (models.length && !model) setModel(models[0].id); }, [models, model]);
+  // Prefer a known-good free Zen model; only fall back to the first in the list.
+  useEffect(() => {
+    if (models.length && !model) {
+      const preferred = ['opencode/mimo-v2.5-free', 'opencode/hy3-free', 'opencode/big-pickle']
+        .find(id => models.some(m => m.id === id));
+      setModel(preferred || models[0].id);
+    }
+  }, [models, model]);
 
   const handleSubmit = (e) => {
     e.preventDefault();

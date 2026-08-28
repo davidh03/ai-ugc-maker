@@ -36,12 +36,18 @@ app.use(express.json({ limit: '50mb' }));
 // Models endpoint
 app.get('/api/models', async (_req, res) => {
   try {
+    // NOTE: do NOT inject OPENCODE_API_KEY here. That key is the paid
+    // opencode-go subscription (currently dead) and makes the list show
+    // paid models that 500 on use. Without it, `opencode models` returns
+    // only what this machine can actually reach (free Zen models, or paid
+    // Zen models once the user runs the opencode TUI and /connect's their
+    // Zen key into auth.json).
     const { stdout } = await execFileP('/home/clez/.opencode/bin/opencode', ['models'], {
-      env: { ...process.env, PATH: '/home/clez/.opencode/bin:' + process.env.PATH, OPENCODE_API_KEY: env.OPENCODE_API_KEY || '' },
+      env: { ...process.env, PATH: '/home/clez/.opencode/bin:' + process.env.PATH },
     });
     const models = stdout.trim().split('\n').filter(Boolean).map(m => ({ id: m, name: m.split('/').pop() }));
     res.json(models);
-  } catch { res.json([{ id: 'opencode/mimo-v2.5', name: 'mimo-v2.5' }]); }
+  } catch { res.json([{ id: 'opencode/mimo-v2.5-free', name: 'mimo-v2.5-free' }]); }
 });
 
 // Asset upload — multipart form data (no multer needed, raw body)
