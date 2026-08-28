@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, unlinkSync } from 'node:fs';
 import { createJob } from './jobs.js';
 import { loadJobs, upsertJob } from './store.js';
 import { runJob, cancelJob } from './jobRunner.js';
@@ -27,9 +27,13 @@ const config = {
   dataDir: process.env.DATA_DIR || path.join(__dirname, '..', 'data'),
 };
 
-const app = express();
-app.use(express.json());
+const ASSETS_DIR = path.join(config.dataDir, 'assets');
+mkdirSync(ASSETS_DIR, { recursive: true });
 
+const app = express();
+app.use(express.json({ limit: '50mb' }));
+
+// Models endpoint
 app.get('/api/models', async (_req, res) => {
   try {
     const { stdout } = await execFileP('/home/clez/.opencode/bin/opencode', ['models'], {
@@ -40,6 +44,53 @@ app.get('/api/models', async (_req, res) => {
   } catch { res.json([{ id: 'opencode/mimo-v2.5', name: 'mimo-v2.5' }]); }
 });
 
+// Asset upload — multipart form data (no multer needed, raw body)
+app.post('/api/assets', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => {
+  try {
+    const filename = req.headers['x-filename'] || 'upload';
+    const category = req.headers['x-category'] || 'other'; // image, video, music, other
+    const id = crypto.randomUUID().slice(0, 8);
+    const ext = path.extname(filename);
+    const safeName = `${id}-${filename.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const assetDir = path.join(ASSETS_DIR, category);
+    mkdirSync(assetDir, { recursive: true });
+    const filePath = path.join(assetDir, safeName);
+    writeFileSync(filePath, req.body);
+    const asset = {
+      id,
+      filename: safeName,
+      originalName: filename,
+      category,
+      size: req.body.length,
+      path: `assets/${category}/${safeName}`,
+      uploadedAt: Date.now(),
+    };
+    res.status(201).json(asset);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+// List assets
+app.get('/api/assets', (_req, res) => {
+  const assets = [];
+  for (const cat of ['image', 'video', 'music', 'other']) {
+    const dir = path.join(ASSETS_DIR, cat);
+    if (!existsSync(dir)) continue;
+    for (const f of readdirSync(dir)) {
+      const fp = path.join(dir, f);
+      const stat = require('fs').statSync(fp);
+      assets.push({ filename: f, category: cat, size: stat.size, path: `assets/${cat}/${f}` });
+    }
+  }
+  res.json(assets);
+});
+
+// Serve assets
+app.use('/api/assets/files', express.static(ASSETS_DIR));
+
+// Serve asset files from data dir
+app.use('/assets', express.static(ASSETS_DIR));
+
+// Jobs routes
 app.post('/api/jobs', (req, res) => {
   try {
     const job = createJob(req.body);
@@ -77,6 +128,7 @@ app.post('/api/jobs/:id/cancel', (req, res) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// SPA catch-all
 const distDir = path.join(__dirname, '..', '..', 'web', 'dist');
 app.use(express.static(distDir));
 app.get('/{*splat}', (_req, res) => { res.sendFile(path.join(distDir, 'index.html')); });
