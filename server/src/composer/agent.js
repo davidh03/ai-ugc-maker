@@ -20,6 +20,30 @@ const AGENT_BINS = {
   claude: 'claude', codex: 'codex',
 };
 
+// opencode-go gateway 5xx ("Unexpected server error" + ref). These are
+// transient provider outages — retrying them is safe and cheap (the model
+// never streamed, so the failed attempt billed nothing).
+function isTransientGatewayError(output) {
+  return /UnknownError/.test(output) && /Unexpected server error/.test(output);
+}
+
+function runOnce(agentBin, args, jobDir) {
+  return new Promise((resolve, reject) => {
+    const agentEnv = { ...process.env, PATH: (process.env.HOME || '/home/clez') + '/.opencode/bin:' + process.env.PATH };
+    if (envVars.OPENCODE_API_KEY) agentEnv.OPENCODE_API_KEY = envVars.OPENCODE_API_KEY;
+
+    const child = spawn(agentBin, args, { cwd: jobDir, stdio: ['ignore', 'pipe', 'pipe'], env: agentEnv });
+    let stdout = '', stderr = '';
+    child.stdout.on('data', d => stdout += d);
+    child.stderr.on('data', d => stderr += d);
+    child.on('close', code => {
+      if (existsSync(path.join(jobDir, 'index.html'))) return resolve(jobDir);
+      reject({ code, output: (stderr || stdout) });
+    });
+    child.on('error', reject);
+  });
+}
+
 export const agentComposer = {
   async compose(job) {
     const jobDir = path.join(__dirname, '..', '..', 'data', 'jobs', job.id);
@@ -39,19 +63,21 @@ export const agentComposer = {
       ? ['run', prompt, '--model', model, '--pure', '--auto']
       : [prompt];
 
-    return new Promise((resolve, reject) => {
-      const agentEnv = { ...process.env, PATH: (process.env.HOME || '/home/clez') + '/.opencode/bin:' + process.env.PATH };
-      if (envVars.OPENCODE_API_KEY) agentEnv.OPENCODE_API_KEY = envVars.OPENCODE_API_KEY;
-
-      const child = spawn(agentBin, args, { cwd: jobDir, stdio: ['ignore', 'pipe', 'pipe'], env: agentEnv });
-      let stdout = '', stderr = '';
-      child.stdout.on('data', d => stdout += d);
-      child.stderr.on('data', d => stderr += d);
-      child.on('close', code => {
-        if (existsSync(path.join(jobDir, 'index.html'))) resolve(jobDir);
-        else reject(new Error('Agent exited ' + code + ': ' + (stderr || stdout).slice(0, 300)));
-      });
-      child.on('error', reject);
-    });
+    const maxAttempts = Number(process.env.AGENT_MAX_ATTEMPTS || 3);
+    let lastErr = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await runOnce(agentBin, args, jobDir);
+      } catch (err) {
+        lastErr = err;
+        const output = err.output || String(err.message || err);
+        try { writeFileSync(path.join(jobDir, 'agent.log'), output.slice(0, 20000)); } catch {}
+        const retryable = isTransientGatewayError(output);
+        if (!retryable || attempt === maxAttempts) break;
+        await new Promise(r => setTimeout(r, attempt * 10000)); // 10s, 20s backoff
+      }
+    }
+    const detail = (lastErr.output || String(lastErr.message || lastErr)).slice(0, 300);
+    throw new Error('Agent exited ' + lastErr.code + ': ' + detail + ' [attempts=' + maxAttempts + ']');
   }
 };
