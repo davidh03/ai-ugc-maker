@@ -40,7 +40,7 @@ export default function JobDetail() {
         )}
       </div>
 
-      <ProgressBar stage={job.stage} progress={job.progress} />
+      <ProgressBar stage={job.stage} progress={job.progress} startedAt={job.startedAt} />
 
       {job.status === 'done' && (
         <div style={{ marginTop: 16 }}>
