@@ -15,12 +15,10 @@ const config = {
 const app = express();
 app.use(express.json());
 
-// Jobs routes
 app.post('/api/jobs', (req, res) => {
   try {
     const job = createJob(req.body);
     upsertJob(job);
-    // Fire async render (don't await)
     runJob(job).catch(err => console.error('Render failed:', err));
     res.status(201).json(job);
   } catch (err) {
@@ -61,7 +59,6 @@ app.post('/api/jobs/:id/cancel', (req, res) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-// SPA catch-all
 const distDir = path.join(__dirname, '..', '..', 'web', 'dist');
 app.use(express.static(distDir));
 app.get('/{*splat}', (_req, res) => {

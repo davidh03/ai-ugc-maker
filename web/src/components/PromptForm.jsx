@@ -6,16 +6,22 @@ const STYLES = [
   { value: 'social', label: 'Social Clip' },
 ];
 
+const AGENTS = [
+  { value: 'none', label: 'Template (no AI)' },
+  { value: 'opencode', label: 'OpenCode' },
+];
+
 export default function PromptForm({ onSubmit, loading }) {
   const [brief, setBrief] = useState('');
   const [durationSec, setDurationSec] = useState(10);
   const [style, setStyle] = useState('product');
   const [music, setMusic] = useState(false);
+  const [agent, setAgent] = useState('none');
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!brief.trim()) return;
-    onSubmit({ brief: brief.trim(), durationSec, style, music });
+    onSubmit({ brief: brief.trim(), durationSec, style, music, agent });
     setBrief('');
   };
 
@@ -38,7 +44,7 @@ export default function PromptForm({ onSubmit, loading }) {
           fontFamily: 'inherit',
         }}
       />
-      <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <label style={{ fontSize: 13, color: '#aaa' }}>
           Duration:
           <input
@@ -71,6 +77,19 @@ export default function PromptForm({ onSubmit, loading }) {
           }}
         >
           {STYLES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
+        <select
+          value={agent}
+          onChange={(e) => setAgent(e.target.value)}
+          style={{
+            padding: '4px 8px',
+            backgroundColor: '#1a1a1a',
+            color: '#fff',
+            border: '1px solid #333',
+            borderRadius: 4,
+          }}
+        >
+          {AGENTS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
         </select>
         <label style={{ fontSize: 13, color: '#aaa', display: 'flex', alignItems: 'center', gap: 4 }}>
           <input

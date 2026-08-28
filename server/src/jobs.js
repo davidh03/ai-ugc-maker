@@ -1,5 +1,4 @@
 const VALID_STATUSES = ['queued', 'running', 'done', 'failed', 'cancelled'];
-const VALID_STAGES = ['composing', 'linting', 'rendering', 'encoding'];
 
 const TRANSITIONS = {
   queued:  ['running', 'cancelled'],
@@ -27,7 +26,7 @@ export function wordBudget(durationSec, wordsPerMinute = 150) {
   return Math.round(durationSec * wordsPerMinute / 60);
 }
 
-export function createJob({ brief, durationSec, style = 'product', music = false }) {
+export function createJob({ brief, durationSec, style = 'product', music = false, agent = 'none' }) {
   if (!brief || typeof brief !== 'string') throw new Error('brief is required');
   if (!durationSec || typeof durationSec !== 'number' || durationSec < 1) {
     throw new Error('durationSec must be a positive number');
@@ -41,6 +40,7 @@ export function createJob({ brief, durationSec, style = 'product', music = false
     durationSec,
     style,
     music,
+    agent,
     status: 'queued',
     stage: null,
     progress: 0,

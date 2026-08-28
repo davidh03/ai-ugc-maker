@@ -26,7 +26,7 @@ export function cancelJob(jobId) {
 }
 
 export async function runJob(job) {
-  const composer = pickComposer();
+  const composer = pickComposer(job);
   try {
     update(job, { status: 'running', stage: 'composing', startedAt: Date.now() });
 
