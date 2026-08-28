@@ -21,16 +21,21 @@ const AGENT_BINS = {
 };
 
 // opencode-go gateway 5xx ("Unexpected server error" + ref). These are
-// transient provider outages — retrying them is safe and cheap (the model
-// never streamed, so the failed attempt billed nothing).
+// transient provider outages (or exhausted subscription credit) —
+// retrying them is safe: the model never streamed, so the attempt billed nothing.
 function isTransientGatewayError(output) {
   return /UnknownError/.test(output) && /Unexpected server error/.test(output);
 }
 
-function runOnce(agentBin, args, jobDir) {
+function runOnce(agentBin, args, jobDir, model) {
   return new Promise((resolve, reject) => {
     const agentEnv = { ...process.env, PATH: (process.env.HOME || '/home/clez') + '/.opencode/bin:' + process.env.PATH };
-    if (envVars.OPENCODE_API_KEY) agentEnv.OPENCODE_API_KEY = envVars.OPENCODE_API_KEY;
+    // Only inject the paid opencode-go key for paid models. Free Zen models
+    // (opencode/*-free) authenticate via ~/.local/share/opencode/auth.json —
+    // overriding OPENCODE_API_KEY with a dead key breaks them.
+    if (model.startsWith('opencode-go/') && envVars.OPENCODE_API_KEY) {
+      agentEnv.OPENCODE_API_KEY = envVars.OPENCODE_API_KEY;
+    }
 
     const child = spawn(agentBin, args, { cwd: jobDir, stdio: ['ignore', 'pipe', 'pipe'], env: agentEnv });
     let stdout = '', stderr = '';
@@ -58,16 +63,17 @@ export const agentComposer = {
 
     writeFileSync(path.join(jobDir, 'prompt.txt'), prompt);
 
-    const model = job.model || 'opencode-go/mimo-v2.5';
+    // Default to free OpenCode Zen model (no subscription needed).
+    const model = job.model || 'opencode/mimo-v2.5-free';
     const args = agentName === 'opencode'
-      ? ['run', prompt, '--model', model, '--pure', '--auto']
+      ? ['run', prompt, '--model', model, '--dir', jobDir, '--pure', '--auto']
       : [prompt];
 
     const maxAttempts = Number(process.env.AGENT_MAX_ATTEMPTS || 5);
     let lastErr = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        return await runOnce(agentBin, args, jobDir);
+        return await runOnce(agentBin, args, jobDir, model);
       } catch (err) {
         lastErr = err;
         const output = err.output || String(err.message || err);
