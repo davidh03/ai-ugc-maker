@@ -29,8 +29,8 @@ export const agentComposer = {
     const agentBin = AGENT_BINS[agentName];
     if (!agentBin || !existsSync(agentBin)) throw new Error('Agent not found: ' + agentName);
 
-    const assets = (job.assets || []).map(a => a.originalName).join(', ');
-    const prompt = 'Create index.html: ' + job.brief + '. ' + job.durationSec + 's ' + job.style + ' video. 1920x1080. Use GSAP animations. Include data-composition-id, data-width, data-height, class=clip, data-track-index, data-start, data-duration attributes on divs. Add window.__timelines.' + (assets ? ' Assets: ' + assets : '');
+    const hasAssets = (job.assets || []).length > 0;
+    const prompt = 'Create index.html: ' + job.brief + '. ' + job.durationSec + 's ' + job.style + ' video. 1920x1080. Use GSAP animations. Include data-composition-id, data-width, data-height, class=clip, data-track-index, data-start, data-duration attributes on divs. Add window.__timelines.' + (hasAssets ? ' Available: images and video clips.' : '');
 
     writeFileSync(path.join(jobDir, 'prompt.txt'), prompt);
 
