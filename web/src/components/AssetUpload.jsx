@@ -1,15 +1,10 @@
-import { useState, useEffect } from 'react';
-import { fetchJson } from '../api/client';
+import { useState } from 'react';
 
 const CATEGORIES = ['image', 'video', 'music', 'other'];
 
 export default function AssetUpload({ onAssetsChange }) {
   const [assets, setAssets] = useState([]);
   const [uploading, setUploading] = useState(false);
-
-  useEffect(() => {
-    fetchJson('/assets').then(setAssets).catch(() => {});
-  }, []);
 
   const handleUpload = async (e) => {
     const files = Array.from(e.target.files);
@@ -47,8 +42,6 @@ export default function AssetUpload({ onAssetsChange }) {
   const removeAsset = (i) => {
     setAssets(prev => prev.filter((_, idx) => idx !== i));
   };
-
-  useEffect(() => { onAssetsChange?.(assets); }, [assets]);
 
   const chip = (a, i) => (
     <div key={a.id || i} style={{
