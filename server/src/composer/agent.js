@@ -63,7 +63,7 @@ export const agentComposer = {
       ? ['run', prompt, '--model', model, '--pure', '--auto']
       : [prompt];
 
-    const maxAttempts = Number(process.env.AGENT_MAX_ATTEMPTS || 3);
+    const maxAttempts = Number(process.env.AGENT_MAX_ATTEMPTS || 5);
     let lastErr = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -74,7 +74,7 @@ export const agentComposer = {
         try { writeFileSync(path.join(jobDir, 'agent.log'), output.slice(0, 20000)); } catch {}
         const retryable = isTransientGatewayError(output);
         if (!retryable || attempt === maxAttempts) break;
-        await new Promise(r => setTimeout(r, attempt * 10000)); // 10s, 20s backoff
+        await new Promise(r => setTimeout(r, attempt * 10000)); // 10s, 20s, 30s, 40s backoff
       }
     }
     const detail = (lastErr.output || String(lastErr.message || lastErr)).slice(0, 300);
