@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function migrateWorkflow(job) {
   if (!Array.isArray(job?.workflow)) return job;
-  const expected = createWorkflow({ music: job.music, voiceover: job.voiceover, assets: job.assets || [], urls: extractUrls(job.brief || '').length > 0 });
+  const expected = createWorkflow({ music: job.music, voiceover: job.voiceover, assets: job.assets || [], urls: extractUrls(job.brief || '').length > 0, optimize: job.composer === 'agent' });
   if (job.workflow.length === expected.length && expected.every(node => job.workflow.some(existing => existing.id === node.id))) return job;
   const old = new Map(job.workflow.map(node => [node.id, node]));
   return { ...job, workflow: expected.map(node => {

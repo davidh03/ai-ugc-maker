@@ -15,6 +15,7 @@ import { synthesizeOpenAIVoiceover } from './openaiTts.js';
 import { synthesizeMiniMaxVoiceover } from './minimaxTts.js';
 import { buildNarrationScript } from './narration.js';
 import { parsePresentationScript, narrationPlanPrompt } from './scriptParser.js';
+import { optimizePrompt } from './promptOptimizer.js';
 
 
 const execFileP = promisify(execFile);
@@ -38,6 +39,14 @@ export async function runJob(job) {
       job.voiceoverScript = parsedScript.script;
       job.compositionBrief = parsedScript.scenes.map(scene => `${scene.title} (${scene.startSec}-${scene.endSec}s): ${scene.visual}${scene.onScreen ? ` On screen: ${scene.onScreen}.` : ''}`).join(' ');
       update(job, { originalBrief: job.originalBrief, compositionBrief: job.compositionBrief, narrationPlan: parsedScript, voiceoverScript: parsedScript.script });
+    }
+
+    if (!parsedScript.detected && job.composer === 'agent') {
+      update(job, { stage: 'prompt-optimizing', progress: 0 });
+      const optimization = await optimizePrompt(job, path.join(config.dataDir, 'jobs', job.id));
+      job.originalBrief = job.brief;
+      job.brief = optimization.brief;
+      update(job, { originalBrief: job.originalBrief, brief: job.brief, promptOptimization: { optimized: true, provider: optimization.provider, model: optimization.model }, workflowStatus: 'done', progress: 100 });
     }
 
     if (job.workflow?.find(node => node.id === 'web-research')?.enabled) try {

@@ -17,6 +17,6 @@ export function createJob(input) {
   if (!COMPOSERS.includes(composer)) throw new Error('invalid composer');
   if (composer === 'agent' && !PROVIDERS.includes(provider)) throw new Error('invalid provider');
   if (composer === 'agent' && !model) throw new Error('model is required for agent composer');
-  return { id: crypto.randomUUID().slice(0, 8), brief, durationSec, style, music, voiceover, voiceoverProvider, composer, provider, agent: composer === 'template' ? 'none' : provider, model, reasoningEffort, assets, workflow: createWorkflow({ music, voiceover, assets, urls: extractUrls(brief).length > 0 }), status: 'queued', stage: null, progress: 0, createdAt: Date.now(), startedAt: null, finishedAt: null, error: null, outputRel: null, wordBudget: wordBudget(durationSec) };
+  return { id: crypto.randomUUID().slice(0, 8), brief, durationSec, style, music, voiceover, voiceoverProvider, composer, provider, agent: composer === 'template' ? 'none' : provider, model, reasoningEffort, assets, workflow: createWorkflow({ music, voiceover, assets, urls: extractUrls(brief).length > 0, optimize: composer === 'agent' }), status: 'queued', stage: null, progress: 0, createdAt: Date.now(), startedAt: null, finishedAt: null, error: null, outputRel: null, wordBudget: wordBudget(durationSec) };
 }
 export { VALID_STATUSES };
