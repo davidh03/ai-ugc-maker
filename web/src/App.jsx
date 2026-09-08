@@ -1,27 +1,5 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, NavLink, Routes, Route } from 'react-router-dom';
 import Home from './pages/Home';
 import JobDetail from './pages/JobDetail';
-
-export default function App() {
-  return (
-    <BrowserRouter>
-      <div style={{
-        maxWidth: 720,
-        margin: '0 auto',
-        padding: '32px 24px',
-        fontFamily: 'system-ui, -apple-system, sans-serif',
-        backgroundColor: '#111',
-        color: '#fff',
-        minHeight: '100vh',
-      }}>
-        <h1 style={{ marginBottom: 24, fontSize: 24 }}>
-          <span style={{ color: '#3b82f6' }}>ai</span>-ugc-maker
-        </h1>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/jobs/:id" element={<JobDetail />} />
-        </Routes>
-      </div>
-    </BrowserRouter>
-  );
-}
+function Shell({ children }) { return <div className="app-shell"><aside className="sidebar"><div className="brand"><span>ai</span> ugc maker</div><nav className="nav"><NavLink to="/">✦ &nbsp; Create</NavLink><NavLink to="/">◫ &nbsp; Generations</NavLink><NavLink to="/">▧ &nbsp; Assets</NavLink><NavLink to="/">⚙ &nbsp; Settings</NavLink></nav><div className="sidebar-footer"><span className="status-dot" />Local studio online</div></aside><main className="main">{children}</main></div>; }
+export default function App() { return <BrowserRouter><Shell><Routes><Route path="/" element={<Home />} /><Route path="/jobs/:id" element={<JobDetail />} /></Routes></Shell></BrowserRouter>; }

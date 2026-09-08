@@ -1,141 +1,27 @@
-import { useState, useEffect, useRef } from 'react';
-import { getModels } from '../api/client';
+import { useEffect, useState } from 'react';
+import { useProviderModels } from '../hooks/useProviderModels';
+import { useCodexLogin, useProviders } from '../hooks/useProviders';
 import AssetUpload from './AssetUpload';
-
-const STYLES = [
-  { value: 'product', label: 'Product Teaser' },
-  { value: 'explainer', label: 'Explainer' },
-  { value: 'social', label: 'Social Clip' },
-];
-const AGENTS = [
-  { value: 'none', label: 'Template (no AI)' },
-  { value: 'opencode', label: 'OpenCode' },
-];
-
-const LS_KEY = 'aiugc-maker-form-v1';
-
-function loadDraft() {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return null;
-    const d = JSON.parse(raw);
-    if (typeof d !== 'object' || d === null) return null;
-    return d;
-  } catch { return null; }
-}
-
+const STYLES = [{ value: 'product', label: 'Product teaser' }, { value: 'explainer', label: 'Explainer' }, { value: 'social', label: 'Social clip' }];
+const LS_KEY = 'aiugc-maker-form-v1'; const CONFIG_KEY = 'aiugc-maker-config-v1';
+function loadDraft() { try { const d = JSON.parse(localStorage.getItem(LS_KEY)); return d && typeof d === 'object' ? d : null; } catch { return null; } }
+function loadConfig() { try { const d = JSON.parse(localStorage.getItem(CONFIG_KEY)); return d && typeof d === 'object' ? d : null; } catch { return null; } }
 export default function PromptForm({ onSubmit, loading }) {
-  const [brief, setBrief] = useState('');
-  const [durationSec, setDurationSec] = useState(10);
-  const [style, setStyle] = useState('product');
-  const [music, setMusic] = useState(false);
-  const [agent, setAgent] = useState('none');
-  const [model, setModel] = useState('');
-  const [models, setModels] = useState([]);
-  const [assets, setAssets] = useState([]);
-  const hydrated = useRef(false);
-
-  // Functional-update-safe setAssets: AssetUpload passes updater fns.
-  const updateAssets = (updater) => setAssets(prev => typeof updater === 'function' ? updater(prev) : updater);
-
-  // Restore last-used settings + asset chips on mount (first pass only)
-  useEffect(() => {
-    const draft = loadDraft();
-    if (draft) {
-      if (typeof draft.brief === 'string') setBrief(draft.brief);
-      if (typeof draft.durationSec === 'number') setDurationSec(draft.durationSec);
-      if (STYLES.some(s => s.value === draft.style)) setStyle(draft.style);
-      if (typeof draft.music === 'boolean') setMusic(draft.music);
-      if (AGENTS.some(a => a.value === draft.agent)) setAgent(draft.agent);
-      if (typeof draft.model === 'string') setModel(draft.model);
-      if (Array.isArray(draft.assets) && draft.assets.length > 0) setAssets(draft.assets);
-    }
-    hydrated.current = true;
-  }, []);
-
-  // Persist on every change — but never on the very first render, so the
-  // restore above can't be clobbered by an empty-state write.
-  useEffect(() => {
-    if (!hydrated.current) return;
-    try {
-      localStorage.setItem(LS_KEY, JSON.stringify({ brief, durationSec, style, music, agent, model, assets }));
-    } catch {}
-  }, [brief, durationSec, style, music, agent, model, assets]);
-
-  useEffect(() => { getModels().then(setModels).catch(() => {}); }, []);
-  // Keep the selected model valid against the live list: prefer a known-good
-  // free Zen model, and if a saved model is stale (e.g. opencode-go/* from
-  // before the Zen migration) reset it instead of leaving a dead selection.
-  useEffect(() => {
-    if (!models.length) return;
-    const preferred = ['opencode/mimo-v2.5-free', 'opencode/hy3-free', 'opencode/big-pickle']
-      .find(id => models.some(m => m.id === id)) || models[0].id;
-    if (!model || !models.some(m => m.id === model)) setModel(preferred);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [models]);
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!brief.trim()) return;
-    onSubmit({
-      brief: brief.trim(),
-      durationSec,
-      style,
-      music,
-      agent,
-      model: agent !== 'none' ? model : undefined,
-      assets: assets.length ? assets : undefined,
-    });
-    setBrief('');
-  };
-
-  const sel = { padding: '4px 8px', backgroundColor: '#1a1a1a', color: '#fff', border: '1px solid #333', borderRadius: 6, fontSize: 13 };
-
-  return (
-    <form onSubmit={handleSubmit} style={{ marginBottom: 24 }}>
+  const [brief, setBrief] = useState(''), [durationSec, setDurationSec] = useState(15), [style, setStyle] = useState('product'), [music, setMusic] = useState(false), [voiceover, setVoiceover] = useState(false), [voiceoverProvider, setVoiceoverProvider] = useState('openai-tts'), [composer, setComposer] = useState('template'), [provider, setProvider] = useState('openai-codex'), [model, setModel] = useState(''), [assets, setAssets] = useState([]), [connectError, setConnectError] = useState(''), [hydrated, setHydrated] = useState(false);
+  const { providers, refresh: refreshProviders } = useProviders(); const selectedProvider = providers.find(p => p.id === provider); const { models, loading: modelsLoading, error: modelsError, refresh: refreshModels } = useProviderModels(provider); const { login, connect, cancel } = useCodexLogin(async () => { await refreshProviders(); await refreshModels(); });
+  useEffect(() => { const d = loadDraft(), c = loadConfig(); const settings = c || d; if (settings) { if (settings.durationSec) setDurationSec(settings.durationSec); if (settings.style) setStyle(settings.style); if (typeof settings.music === 'boolean') setMusic(settings.music); if (typeof settings.voiceover === 'boolean') setVoiceover(settings.voiceover); if (settings.voiceoverProvider) setVoiceoverProvider(settings.voiceoverProvider); if (settings.composer) setComposer(settings.composer); if (settings.provider) setProvider(settings.provider); if (settings.model) setModel(settings.model); } if (d) { if (d.brief) setBrief(d.brief); if (Array.isArray(d.assets)) setAssets(d.assets); } setHydrated(true); }, []);
+  useEffect(() => { if (hydrated) { localStorage.setItem(CONFIG_KEY, JSON.stringify({ durationSec, style, music, voiceover, voiceoverProvider, composer, provider, model })); localStorage.setItem(LS_KEY, JSON.stringify({ brief, assets })); } }, [hydrated, brief, durationSec, style, music, voiceover, voiceoverProvider, composer, provider, model, assets]);
+  useEffect(() => { if (models.length && !models.some(m => m.id === model)) setModel(models.find(m => m.default)?.id || models[0].id); }, [models]);
+  const connectCodex = async flow => { setConnectError(''); try { const result = await connect(flow); if (result.authUrl) window.open(result.authUrl, '_blank', 'noopener,noreferrer'); } catch (e) { setConnectError(e.message); } };
+  const updateAssets = updater => setAssets(prev => typeof updater === 'function' ? updater(prev) : updater);
+  const submit = e => { e.preventDefault(); if (!brief.trim() || (composer === 'agent' && !model)) return; onSubmit({ brief: brief.trim(), durationSec, style, music, voiceover, voiceoverProvider, composer, provider: composer === 'agent' ? provider : undefined, model: composer === 'agent' ? model : undefined, assets: assets.length ? assets : undefined }); setBrief(''); };
+  const codexConnected = selectedProvider?.authState === 'connected';
+  return <form onSubmit={submit}>
+    <div className="panel"><div className="eyebrow">New generation</div><h2>What should we make?</h2><textarea className="brief" value={brief} onChange={e => setBrief(e.target.value)} placeholder="Describe the hook, product, pacing, visuals, and call to action…" aria-label="Video brief" />
+      <div className="toolbar"><label className="control-label">Duration<select className="control" value={durationSec} onChange={e => setDurationSec(Number(e.target.value))}><option value="10">10 seconds</option><option value="15">15 seconds</option><option value="30">30 seconds</option><option value="60">60 seconds</option><option value="90">90 seconds</option></select></label><label className="control-label">Format<select className="control" value={style} onChange={e => setStyle(e.target.value)}>{STYLES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</select></label><label className="control-label">Composer<select className="control" value={composer} onChange={e => setComposer(e.target.value)}><option value="template">Template · instant</option><option value="agent">AI composer</option></select></label></div>
       <AssetUpload onAssetsChange={updateAssets} assets={assets} />
-      <textarea
-        value={brief}
-        onChange={e => setBrief(e.target.value)}
-        placeholder="Describe your video..."
-        rows={3}
-        style={{ width: '100%', padding: 12, backgroundColor: '#1a1a1a', color: '#fff', border: '1px solid #333', borderRadius: 8, fontSize: 14 }}
-      />
-      <div style={{ display: 'flex', gap: 12, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <label style={{ fontSize: 13, color: '#aaa' }}>
-          Duration:{' '}
-          <input
-            type="number"
-            value={durationSec}
-            onChange={e => setDurationSec(Number(e.target.value))}
-            min={1}
-            max={180}
-            style={{ width: 60, marginLeft: 6, padding: '4px 8px', backgroundColor: '#1a1a1a', color: '#fff', border: '1px solid #333', borderRadius: 6, fontSize: 13 }}
-          />
-        </label>
-        <select value={style} onChange={e => setStyle(e.target.value)} style={sel}>
-          {STYLES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-        </select>
-        <select value={agent} onChange={e => setAgent(e.target.value)} style={sel}>
-          {AGENTS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
-        </select>
-        {agent !== 'none' && models.length > 0 && (
-          <select value={model} onChange={e => setModel(e.target.value)} style={sel}>
-            {models.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-        )}
-        <label style={{ fontSize: 13, color: '#aaa', display: 'flex', alignItems: 'center', gap: 4 }}>
-          <input type="checkbox" checked={music} onChange={e => setMusic(e.target.checked)} /> Music
-        </label>
-        {assets.length > 0 && (
-          <span style={{ fontSize: 12, color: '#6ee7a0', fontWeight: 600 }}>
-            ✓ {assets.length} asset{assets.length > 1 ? 's' : ''} will be attached
-          </span>
-        )}
-        <button type="submit" disabled={loading || !brief.trim()} style={{ marginLeft: 'auto', padding: '8px 20px', backgroundColor: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14, fontWeight: 500 }}>
-          {loading ? 'Creating...' : 'Create Video'}
-        </button>
-      </div>
-    </form>
-  );
+      {composer === 'agent' && <><div className="provider-row"><label className="control-label">AI provider<select className="control" value={provider} onChange={e => { setProvider(e.target.value); setModel(''); }}><option value="openai-codex">OpenAI Codex</option><option value="opencode">OpenCode</option></select></label><label className="control-label">Model<select className="control" value={model} onChange={e => setModel(e.target.value)} disabled={modelsLoading || !models.length}>{modelsLoading ? <option>Loading models…</option> : models.length ? models.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option>No models available</option>}</select></label></div>{provider === 'openai-codex' && !codexConnected && <div className="connection"><span><strong>Connect ChatGPT</strong><br /><span className="muted">Codex OAuth is required for AI composition.</span></span><button type="button" onClick={() => connectCodex('browser')}>Connect</button></div>}{provider === 'openai-codex' && login?.status === 'pending' && <div className="connection"><span>Waiting for OpenAI… {login.userCode && <><div className="login-code">{login.userCode}</div><small className="muted">Open {login.verificationUrl} to finish device login.</small></>}</span><button type="button" onClick={cancel}>Cancel</button></div>}{(connectError || modelsError) && <div className="error">{connectError || modelsError}</div>}</>}
+      <div className="toolbar"><label className="control"><input type="checkbox" checked={music} onChange={e => setMusic(e.target.checked)} /> Add music bed</label><label className="control"><input type="checkbox" checked={voiceover} onChange={e => setVoiceover(e.target.checked)} /> Add voiceover</label>{voiceover && <label className="control-label">Voice provider<select className="control" value={voiceoverProvider} onChange={e => setVoiceoverProvider(e.target.value)}><option value="openai-tts">OpenAI TTS</option><option value="minimax-tts">MiniMax TTS</option><option value="google-cloud-tts">Google Cloud TTS</option></select></label>}<button className="primary" type="submit" disabled={loading || !brief.trim() || (composer === 'agent' && !model)}>{loading ? 'Preparing…' : 'Generate video ↗'}</button></div>
+    </div>
+  </form>;
 }

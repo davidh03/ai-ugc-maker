@@ -41,4 +41,10 @@ describe('store', () => {
     upsertJob({ id: 'x', status: 'running' });
     assert.equal(loadJobs()[0].status, 'running');
   });
+
+  it('migrates older URL jobs to show the research node without claiming it ran', () => {
+    saveJobs([{ id: 'legacy', brief: 'Use https://example.com', music: false, assets: [], workflow: [{ id: 'brief', status: 'done' }, { id: 'compose', status: 'done' }] }]);
+    const research = loadJobs()[0].workflow.find(node => node.id === 'web-research');
+    assert.equal(research.enabled, true); assert.equal(research.status, 'pending');
+  });
 });

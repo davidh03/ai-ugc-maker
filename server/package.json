@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test src/**/*.test.js"
+    "start:node22": "nvm use && node src/index.js",
+    "test": "NODE_ENV=test node --test src/*.test.js",
+    "render": "nvm use && npx hyperframes render"
   },
   "dependencies": {
     "express": "^5.1.0",

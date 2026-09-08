@@ -4,12 +4,24 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { createJob } from './jobs.js';
 import { loadJobs, upsertJob } from './store.js';
 import { runJob, cancelJob } from './jobRunner.js';
+import { providersRouter } from './routes/providers.js';
+import { stop as stopCodex } from './providers/codexProvider.js';
+import { getOpenCodeModels } from './providers/opencodeProvider.js';
 
 const execFileP = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+if (Number(process.versions.node.split('.')[0]) < 22 && !process.env.AIUGC_NODE22_REEXEC) {
+  const candidates = [process.env.AIUGC_NODE_BIN, path.join(process.env.HOME || '', '.nvm/versions/node/v22.23.2/bin/node')].filter(Boolean);
+  const node22 = candidates.find(candidate => existsSync(candidate));
+  if (!node22) { console.error(`ai-ugc-maker requires Node.js >= 22 (current: ${process.version}). Run: nvm use 22.23.2`); process.exit(1); }
+  const result = spawnSync(node22, [fileURLToPath(import.meta.url), ...process.argv.slice(2)], { stdio: 'inherit', env: { ...process.env, AIUGC_NODE22_REEXEC: '1', PATH: `${path.dirname(node22)}:${process.env.PATH || ''}` } });
+  process.exit(result.status ?? 1);
+}
 
 function loadEnv() {
   try {
@@ -20,6 +32,7 @@ function loadEnv() {
   } catch { return {}; }
 }
 const env = loadEnv();
+for (const [key, value] of Object.entries(env)) if (process.env[key] === undefined) process.env[key] = value;
 
 const config = {
   host: process.env.HOST || '127.0.0.1',
@@ -33,21 +46,12 @@ mkdirSync(ASSETS_DIR, { recursive: true });
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-// Models endpoint
+// Provider and model catalog routes
+app.use('/api/providers', providersRouter);
+
 app.get('/api/models', async (_req, res) => {
-  try {
-    // NOTE: do NOT inject OPENCODE_API_KEY here. That key is the paid
-    // opencode-go subscription (currently dead) and makes the list show
-    // paid models that 500 on use. Without it, `opencode models` returns
-    // only what this machine can actually reach (free Zen models, or paid
-    // Zen models once the user runs the opencode TUI and /connect's their
-    // Zen key into auth.json).
-    const { stdout } = await execFileP('/home/clez/.opencode/bin/opencode', ['models'], {
-      env: { ...process.env, PATH: '/home/clez/.opencode/bin:' + process.env.PATH },
-    });
-    const models = stdout.trim().split('\n').filter(Boolean).map(m => ({ id: m, name: m.split('/').pop() }));
-    res.json(models);
-  } catch { res.json([{ id: 'opencode/mimo-v2.5-free', name: 'mimo-v2.5-free' }]); }
+  try { res.json(await getOpenCodeModels()); }
+  catch { res.json([{ id: 'opencode/mimo-v2.5-free', name: 'mimo-v2.5-free' }]); }
 });
 
 // Asset upload — multipart form data (no multer needed, raw body)
@@ -147,4 +151,5 @@ const distDir = path.join(__dirname, '..', '..', 'web', 'dist');
 app.use(express.static(distDir));
 app.get('/{*splat}', (_req, res) => { res.sendFile(path.join(distDir, 'index.html')); });
 
-app.listen(config.port, config.host, () => { console.log('listening on ' + config.host + ':' + config.port); });
+const server = app.listen(config.port, config.host, () => { console.log('listening on ' + config.host + ':' + config.port); });
+for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => { await stopCodex(); server.close(() => process.exit(0)); });

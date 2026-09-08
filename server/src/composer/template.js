@@ -2,6 +2,7 @@ import { presets } from '../templates/presets.js';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildNarrationScript } from '../narration.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -12,12 +13,14 @@ export const templateComposer = {
 
     // Word budget enforcement
     const maxWords = Math.round(durationSec * 150 / 60);
-    const words = job.brief.split(/\s+/).length;
+    const sourceBrief = job.compositionBrief || job.brief;
+    const words = sourceBrief.split(/\s+/).length;
     const brief = words > maxWords
-      ? job.brief.split(/\s+/).slice(0, maxWords).join(' ')
-      : job.brief;
+      ? sourceBrief.split(/\s+/).slice(0, maxWords).join(' ')
+      : sourceBrief;
 
     const html = preset.html(brief, durationSec);
+    job.voiceoverScript = buildNarrationScript({ brief, style: job.style, durationSec });
 
     // Write to job workspace
     const jobDir = path.join(__dirname, '..', '..', 'data', 'jobs', job.id);

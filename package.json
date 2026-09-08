@@ -7,6 +7,9 @@
     "dev:server": "cd server && node src/index.js",
     "dev:web": "cd web && npm run dev",
     "build": "cd web && npm run build",
+    "lint": "npm --prefix web run lint",
+    "test": "npm --prefix server test",
+    "check": "npm run test && npm run lint && npm run build",
     "start": "cd server && node src/index.js"
   },
   "devDependencies": {

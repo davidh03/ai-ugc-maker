@@ -2,6 +2,8 @@ import { useParams, Link } from 'react-router-dom';
 import { useJob } from '../hooks/useJob';
 import JobStatusBadge from '../components/JobStatusBadge';
 import ProgressBar from '../components/ProgressBar';
+import WorkflowGraph from '../components/WorkflowGraph';
+
 import VideoPlayer from '../components/VideoPlayer';
 
 export default function JobDetail() {
@@ -40,6 +42,7 @@ export default function JobDetail() {
         )}
       </div>
 
+      <WorkflowGraph workflow={job.workflow} stage={job.stage} />
       <ProgressBar stage={job.stage} progress={job.progress} startedAt={job.startedAt} />
 
       {job.status === 'done' && (

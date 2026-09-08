@@ -1,8 +1,22 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createWorkflow } from './workflow.js';
+import { extractUrls } from './webResearch.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function migrateWorkflow(job) {
+  if (!Array.isArray(job?.workflow)) return job;
+  const expected = createWorkflow({ music: job.music, voiceover: job.voiceover, assets: job.assets || [], urls: extractUrls(job.brief || '').length > 0 });
+  if (job.workflow.length === expected.length && expected.every(node => job.workflow.some(existing => existing.id === node.id))) return job;
+  const old = new Map(job.workflow.map(node => [node.id, node]));
+  return { ...job, workflow: expected.map(node => {
+    const existing = old.get(node.id);
+    if (existing) return { ...node, ...existing, order: node.order };
+    return node;
+  }) };
+}
 
 function getJobsFile() {
   return process.env.JOBS_FILE || path.join(__dirname, '..', 'data', 'jobs.json');
@@ -11,7 +25,7 @@ function getJobsFile() {
 export function loadJobs() {
   const f = getJobsFile();
   if (!existsSync(f)) return [];
-  try { return JSON.parse(readFileSync(f, 'utf8')); }
+  try { return JSON.parse(readFileSync(f, 'utf8')).map(migrateWorkflow); }
   catch { return []; }
 }
 

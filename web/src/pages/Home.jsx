@@ -1,29 +1,6 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useJobs } from '../hooks/useJobs';
 import PromptForm from '../components/PromptForm';
-import JobCard from '../components/JobCard';
-
-export default function Home() {
-  const { jobs, loading, createJob } = useJobs();
-  const [creating, setCreating] = useState(false);
-
-  const handleCreate = async (data) => {
-    setCreating(true);
-    try {
-      await createJob(data);
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  return (
-    <div>
-      <h2 style={{ marginBottom: 16 }}>Create Video</h2>
-      <PromptForm onSubmit={handleCreate} loading={creating} />
-      <h2 style={{ marginBottom: 12, color: '#aaa' }}>History</h2>
-      {loading && <p style={{ color: '#666' }}>Loading...</p>}
-      {!loading && jobs.length === 0 && <p style={{ color: '#666' }}>No videos yet</p>}
-      {jobs.map(job => <JobCard key={job.id} job={job} />)}
-    </div>
-  );
-}
+function Recent({ jobs }) { return <section className="panel"><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h2>Recent generations</h2><span className="muted">{jobs.length} total</span></div><div className="recent">{jobs.slice(0, 6).map(job => <Link className="recent-card" to={'/jobs/' + job.id} key={job.id}><div className="thumb">{job.status === 'done' ? '▶' : '◌'}</div><div style={{minWidth:0}}><strong style={{display:'block',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{job.brief}</strong><span className="badge">{job.status} · {job.durationSec}s · {job.provider || 'template'}</span></div></Link>)}{!jobs.length && <div className="preview">Your generated videos will show up here.</div>}</div></section>; }
+export default function Home() { const { jobs, loading, createJob } = useJobs(); const [creating, setCreating] = useState(false); const handleCreate = async data => { setCreating(true); try { await createJob(data); } finally { setCreating(false); } }; return <><header className="page-header"><div><div className="eyebrow">AI video studio</div><h1>Make it watchable.</h1><p className="muted">Turn a sharp brief into a finished UGC-style video.</p></div><div className="badge"><span className="status-dot" /> Local render engine</div></header><div className="studio-grid"><div><PromptForm onSubmit={handleCreate} loading={creating} /></div><div><section className="panel" style={{marginBottom:20}}><div className="eyebrow">Preview</div><h2>Output workspace</h2><div className="preview">{creating ? 'Preparing your composition…' : 'Preview appears after generation.'}</div></section><Recent jobs={loading ? [] : jobs} /></div></div></>; }
