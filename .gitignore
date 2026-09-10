@@ -3,5 +3,7 @@ server/data/
 web/dist/
 *.mp4
 .env
+.env.*
+!.env.example
 .DS_Store
 server/renders/

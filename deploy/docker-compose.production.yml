@@ -1,0 +1,55 @@
+# One "app" service — the web/API and the render pipeline currently run in
+# the same Node process (see server/src/jobRunner.js), so there is no real
+# worker process to split into a second container yet. That split is Phase 6
+# of docs/plans/aws-production-hosting-cicd.md (job store -> real DB, media
+# -> S3, SQS-driven workers) — don't add a second service here to *look*
+# more scalable before that refactor actually lands; it would just be two
+# containers racing the same JSON job store.
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    # Local/Phase-2 testing: leave IMAGE unset and run `docker compose build
+    # && docker compose up` — it builds and tags `ai-ugc-maker:local` from
+    # the `build:` section above. Production (.github/workflows/deploy.yml):
+    # IMAGE is set to the full ECR repository URI + commit SHA, so `docker
+    # compose pull`/`up` (no --build) pulls that exact image instead.
+    image: ${IMAGE:-ai-ugc-maker:local}
+    restart: unless-stopped
+    # Read back by .github/workflows/deploy.yml before rolling a new tag
+    # out, so a failed health check has a concrete previous tag to roll
+    # back to instead of guessing at "latest".
+    labels:
+      - "deploy.image_tag=${IMAGE_TAG:-local}"
+    ports:
+      - "127.0.0.1:8787:8787"
+    env_file:
+      - ../server/.env.production
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+      DATA_DIR: /app/server/data
+      NODE_ENV: production
+    volumes:
+      - app-data:/app/server/data
+    # Headless Chrome needs real /dev/shm — the Docker default (64MB) is
+    # well under what `hyperframes doctor` reports as healthy on a dev
+    # machine (~7.8GB) and can crash mid-render. Not yet load-tested; revisit
+    # the size once Phase 2 measures one real render (see plan doc).
+    shm_size: "2gb"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  app-data:

@@ -1,0 +1,31 @@
+# Reverse proxy for the first production deployment (Phase 4 of
+# docs/plans/aws-production-hosting-cicd.md). Caddy gets and renews the
+# Let's Encrypt certificate automatically — just point DNS at the instance
+# and replace the placeholder domain below.
+#
+# app.example.com:443 {
+{$DOMAIN:app.example.com} {
+	encode gzip
+
+	# Recommended for a first deployment: since server/src/auth.js gates
+	# /api/* with a single shared bearer token (awkward for a browser
+	# session — video/thumbnail <img>/<video> tags can't send custom
+	# headers), gate the WHOLE site with HTTP Basic Auth at the edge
+	# instead, and leave API_AUTH_TOKEN unset. Generate a hash with:
+	#   caddy hash-password --plaintext '<your-password>'
+	# basicauth {
+	# 	<username> <bcrypt-hash>
+	# }
+
+	reverse_proxy app:8787 {
+		# Large MP4 uploads/downloads: keep the proxy from buffering the
+		# whole body in memory.
+		flush_interval -1
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+	}
+}

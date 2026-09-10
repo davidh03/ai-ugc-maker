@@ -120,6 +120,11 @@ A real local smoke test should call `/api/providers`, `/api/providers/openai-cod
 - `explainer` — landscape explainer
 - `social` — vertical social clip
 
+## Deployment
+
+Production hosting plan: [`docs/plans/aws-production-hosting-cicd.md`](docs/plans/aws-production-hosting-cicd.md).
+Runbook (env vars, Docker Compose, CI/CD setup, what's validated vs. not): [`docs/deploy/README.md`](docs/deploy/README.md).
+
 ## Safety boundaries
 
 - Bind the development server to loopback unless explicitly needed otherwise.

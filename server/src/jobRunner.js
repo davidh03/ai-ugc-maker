@@ -164,6 +164,13 @@ export async function synthesizeScenesVoiceover(job, scenes, outputDir) {
 
 const cancellationSignals = new Map();
 const cancelledJobs = new Set();
+// Job IDs this process is actively driving through runJob. update() only
+// persists status at stage boundaries, so a job mid-render is still on disk
+// as status:'running' right up to process exit — this in-memory set is what
+// lets a graceful shutdown tell "actually running here" apart from "some
+// other process's job", which reconcileOrphanedJobs (below) has to guess at
+// from disk state alone.
+export const activeJobIds = new Set();
 const runtimeEnv = { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH || ''}` };
 
 export function cancelJob(jobId) {
@@ -182,6 +189,7 @@ function throwIfCancelled(job) {
 
 export async function runJob(job) {
   const composer = pickComposer(job);
+  activeJobIds.add(job.id);
   try {
     throwIfCancelled(job);
     update(job, { status: 'running', startedAt: Date.now() });
@@ -326,7 +334,41 @@ export async function runJob(job) {
     update(job, cancelled
       ? { status: 'cancelled', finishedAt: Date.now() }
       : { status: 'failed', error: String(err?.message || err).slice(0, 500), finishedAt: Date.now() });
-  } finally { cancellationSignals.delete(job.id); cancelledJobs.delete(job.id); }
+  } finally { cancellationSignals.delete(job.id); cancelledJobs.delete(job.id); activeJobIds.delete(job.id); }
+}
+
+// Startup reconciliation: a job still 'running' (or a reviewer pass still
+// 'pending'/'running') when this process starts belongs to a previous
+// process — nothing here is driving it forward, so left alone it would sit
+// "running" on disk forever with no progress and no error. Mark it failed
+// but recoverable so the UI can surface the existing rerender/revision path
+// instead of a silently stuck job. Call once at startup, before serving.
+export function reconcileOrphanedJobs() {
+  const jobs = loadJobs();
+  const orphaned = jobs.filter(job => job.status === 'running' || ['pending', 'running'].includes(job.reviewerStatus));
+  for (const job of orphaned) {
+    const patch = { recoverable: true, finishedAt: job.finishedAt || Date.now() };
+    if (job.status === 'running') { patch.status = 'failed'; patch.error = 'Interrupted by server restart — re-render required'; }
+    if (['pending', 'running'].includes(job.reviewerStatus)) { patch.reviewerStatus = 'cancelled'; patch.reviewerError = 'Interrupted by server restart'; }
+    upsertJob({ ...job, ...patch });
+  }
+  return orphaned.map(job => job.id);
+}
+
+// Graceful shutdown: mark every job this process is actively driving as
+// interrupted (and attempt to cancel its child render process) before the
+// process exits, rather than leaving it for reconcileOrphanedJobs to guess
+// about on the next startup. Call from a SIGINT/SIGTERM handler before
+// closing the HTTP server.
+export function markRunningJobsInterrupted() {
+  const ids = [...activeJobIds];
+  for (const id of ids) {
+    cancelJob(id);
+    const job = loadJobs().find(item => item.id === id);
+    if (!job) continue;
+    upsertJob({ ...job, status: 'failed', error: 'Server shut down during generation — re-render required', recoverable: true, finishedAt: Date.now() });
+  }
+  return ids;
 }
 
 async function runPostRenderReview(job) {

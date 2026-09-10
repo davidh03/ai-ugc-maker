@@ -11,10 +11,13 @@ import { planRevision } from './revisionPlanner.js';
 import { resolveRevisionTargets } from './revisionTargetResolver.js';
 import { buildAssetBindings } from './revisionAssetBindings.js';
 import { loadJobs, upsertJob, deleteJob } from './store.js';
-import { runJob, cancelJob } from './jobRunner.js';
+import { runJob, cancelJob, reconcileOrphanedJobs, markRunningJobsInterrupted } from './jobRunner.js';
 import { providersRouter } from './routes/providers.js';
 import { stop as stopCodex } from './providers/codexProvider.js';
 import { getOpenCodeModels } from './providers/opencodeProvider.js';
+import { config } from './config.js';
+import { createAuthMiddleware } from './auth.js';
+import { logger } from './logger.js';
 
 const execFileP = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,28 +30,27 @@ if (Number(process.versions.node.split('.')[0]) < 22 && !process.env.AIUGC_NODE2
   process.exit(result.status ?? 1);
 }
 
-function loadEnv() {
-  try {
-    const lines = readFileSync(path.join(__dirname, '..', '.env'), 'utf8').split('\n');
-    const e = {};
-    for (const l of lines) { const i = l.indexOf('='); if (i > 0) e[l.slice(0,i).trim()] = l.slice(i+1).trim(); }
-    return e;
-  } catch { return {}; }
-}
-const env = loadEnv();
-for (const [key, value] of Object.entries(env)) if (process.env[key] === undefined) process.env[key] = value;
-
-const config = {
-  host: process.env.HOST || '127.0.0.1',
-  port: Number(process.env.PORT || 8787),
-  dataDir: process.env.DATA_DIR || path.join(__dirname, '..', 'data'),
-};
+// .env is loaded as a side effect of importing config.js above (see
+// loadEnv.js) — it must happen there, not here, so it's already in effect
+// for every module that reads process.env via config.js before this file's
+// own body runs.
 
 const ASSETS_DIR = path.join(config.dataDir, 'assets');
 mkdirSync(ASSETS_DIR, { recursive: true });
 
+// 'other' has no allow-list (undefined) — pre-existing behavior for
+// uncategorized uploads is preserved; every named category is now checked
+// against its real extension so an upload can't land in /assets under a
+// disguised extension and get served back out via express.static below.
+const ASSET_EXTENSIONS = {
+  image: ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg'],
+  video: ['.mp4', '.mov', '.webm'],
+  music: ['.mp3', '.wav', '.m4a', '.aac', '.ogg'],
+};
+
 const app = express();
 app.use(express.json({ limit: '50mb' }));
+app.use('/api', createAuthMiddleware());
 
 // Provider and model catalog routes
 app.use('/api/providers', providersRouter);
@@ -66,6 +68,10 @@ app.post('/api/assets', express.raw({ type: '*/*', limit: '50mb' }), (req, res) 
     const requestedCategory = req.headers['x-category'] || 'other';
     const category = ASSET_CATEGORIES.includes(requestedCategory) ? requestedCategory : 'other';
     const required = String(req.headers['x-required'] ?? 'true').toLowerCase() !== 'false'; // default: REQUIRED
+    if (!req.body?.length) return res.status(400).json({ error: 'empty upload' });
+    const ext = path.extname(String(filename)).toLowerCase();
+    const allowedExt = ASSET_EXTENSIONS[category];
+    if (allowedExt && !allowedExt.includes(ext)) return res.status(400).json({ error: `unsupported ${category} extension "${ext || '(none)'}" — expected one of ${allowedExt.join(', ')}` });
     const id = crypto.randomUUID().slice(0, 8);
     const safeName = `${id}-${filename.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     const assetDir = path.join(ASSETS_DIR, category);
@@ -237,12 +243,45 @@ app.delete('/api/jobs/:id', (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
+// Liveness: process is up and responsive. Cheap on purpose — a load
+// balancer/orchestrator should be able to hit this every few seconds.
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+
+// Readiness: the process is up AND can actually do its job — the data
+// volume is mounted and writable, and the renderer's external binaries are
+// on PATH. Distinct from /api/health so a deploy can gate traffic on this
+// without treating every transient ffmpeg hiccup as a liveness failure.
+app.get('/api/ready', async (_req, res) => {
+  const checks = { dataDirWritable: false, ffmpeg: false, ffprobe: false };
+  try {
+    const probePath = path.join(config.dataDir, '.ready-check');
+    writeFileSync(probePath, String(Date.now()));
+    rmSync(probePath, { force: true });
+    checks.dataDirWritable = true;
+  } catch { /* left false */ }
+  try { await execFileP('ffmpeg', ['-version']); checks.ffmpeg = true; } catch { /* left false */ }
+  try { await execFileP('ffprobe', ['-version']); checks.ffprobe = true; } catch { /* left false */ }
+  const ready = Object.values(checks).every(Boolean);
+  res.status(ready ? 200 : 503).json({ ready, checks });
+});
 
 // SPA catch-all
 const distDir = path.join(__dirname, '..', '..', 'web', 'dist');
 app.use(express.static(distDir));
 app.get('/{*splat}', (_req, res) => { res.sendFile(path.join(distDir, 'index.html')); });
 
-const server = app.listen(config.port, config.host, () => { console.log('listening on ' + config.host + ':' + config.port); });
-for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => { await stopCodex(); server.close(() => process.exit(0)); });
+const orphanedJobIds = reconcileOrphanedJobs();
+if (orphanedJobIds.length) logger.warn('reconciled jobs orphaned by a previous process exit', { count: orphanedJobIds.length, jobIds: orphanedJobIds });
+
+const server = app.listen(config.port, config.host, () => { logger.info('listening', { host: config.host, port: config.port, authEnabled: Boolean(config.authToken) }); });
+
+// Graceful shutdown: mark any job this process is actively driving as
+// interrupted/recoverable *before* the process exits, so a SIGTERM from
+// `docker stop`/systemd/a deploy doesn't leave it silently stuck at
+// status:'running' forever — see markRunningJobsInterrupted in jobRunner.js.
+for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => {
+  const interrupted = markRunningJobsInterrupted();
+  if (interrupted.length) logger.warn('marked in-flight jobs interrupted for shutdown', { count: interrupted.length, jobIds: interrupted });
+  await stopCodex();
+  server.close(() => process.exit(0));
+});
