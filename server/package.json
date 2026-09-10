@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "express": "^5.1.0",
+    "hyperframes": "^0.8.0",
     "@hyperframes/producer": "^0.8.0",
     "@hyperframes/sdk": "^0.8.0"
   }

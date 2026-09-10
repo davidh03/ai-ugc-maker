@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { createJob, createRevision } from './jobs.js';
+import { createJob, createRevision, createRerender } from './jobs.js';
 import { buildChangeSet } from './revisionChangeSet.js';
 import { planRevision } from './revisionPlanner.js';
 import { resolveRevisionTargets } from './revisionTargetResolver.js';
@@ -156,6 +156,20 @@ app.post('/api/jobs/:id/revisions', (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
+app.post('/api/jobs/:id/rerender', (req, res) => {
+  try {
+    const jobs = loadJobs();
+    const parent = jobs.find(job => job.id === req.params.id);
+    if (!parent) return res.status(404).json({ error: 'not found' });
+    const sourceJobId = parent.sourceJobId || parent.id;
+    const revisionNumber = jobs.filter(job => (job.sourceJobId || job.id) === sourceJobId).reduce((max, job) => Math.max(max, Number(job.revisionNumber) || 0), 0) + 1;
+    const job = createRerender(parent, revisionNumber);
+    upsertJob(job);
+    runJob(job).catch(err => console.error('Re-render failed:', err));
+    res.status(201).json(job);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
 app.get('/api/jobs/:id', (req, res) => {
   const job = loadJobs().find(j => j.id === req.params.id);
   if (!job) return res.status(404).json({ error: 'not found' });
@@ -187,14 +201,23 @@ app.get('/api/jobs/:id/thumbnail', async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'thumbnail generation failed', detail: String(err.message || err).slice(0, 160) }); }
 });
 
+app.post('/api/jobs/:id/favorite', (req, res) => {
+  const jobs = loadJobs();
+  const job = jobs.find(j => j.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'not found' });
+  job.favorite = !job.favorite;
+  upsertJob(job);
+  res.json(job);
+});
+
 app.post('/api/jobs/:id/cancel', (req, res) => {
   const jobs = loadJobs();
   const job = jobs.find(j => j.id === req.params.id);
   if (!job) return res.status(404).json({ error: 'not found' });
-  if (!['queued', 'running'].includes(job.status)) return res.status(400).json({ error: 'cannot cancel' });
+  const reviewActive = ['pending', 'running'].includes(job.reviewerStatus);
+  if (!['queued', 'running'].includes(job.status) && !(job.status === 'done' && reviewActive)) return res.status(400).json({ error: 'cannot cancel' });
   cancelJob(job.id);
-  job.status = 'cancelled';
-  job.finishedAt = Date.now();
+  if (reviewActive) { job.reviewerStatus = 'cancelled'; job.reviewerCancelRequested = true; } else job.status = 'cancelled';
   upsertJob(job);
   res.json(job);
 });
@@ -204,7 +227,7 @@ app.delete('/api/jobs/:id', (req, res) => {
     const jobs = loadJobs();
     const job = jobs.find(j => j.id === req.params.id);
     if (!job) return res.status(404).json({ error: 'not found' });
-    if (['queued', 'running'].includes(job.status)) return res.status(400).json({ error: 'cannot delete an active generation; cancel it first' });
+  if (['queued', 'running'].includes(job.status) || ['pending', 'running'].includes(job.reviewerStatus)) return res.status(400).json({ error: 'cannot delete an active generation or review; cancel it first' });
     const dependents = jobs.filter(j => j.parentJobId === job.id);
     if (dependents.length) return res.status(400).json({ error: `cannot delete: ${dependents.length} revision(s) depend on this version` });
     deleteJob(job.id);

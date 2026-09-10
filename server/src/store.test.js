@@ -25,6 +25,12 @@ describe('store', () => {
     assert.deepEqual(loadJobs(), []);
   });
 
+  it('fails closed when the jobs file is corrupt', () => {
+    writeFileSync(TEST_JOBS, '{not-json');
+    assert.throws(() => loadJobs(), /corrupt|invalid/i);
+    assert.equal(existsSync(TEST_JOBS + '.corrupt'), true);
+  });
+
   it('saveJobs + loadJobs round-trips', () => {
     const jobs = [{ id: 'a', status: 'queued' }];
     saveJobs(jobs);

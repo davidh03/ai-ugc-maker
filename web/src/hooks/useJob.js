@@ -29,9 +29,15 @@ export function useJob(id) {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Poll until terminal
+  // Poll until terminal. The AI reviewer runs *after* status hits 'done'
+  // (status never leaves 'done' while it works), so a job whose reviewer is
+  // still pending/running is not actually finished settling yet — keep
+  // polling or preferredJobId/reviewerStatus would only ever show up after
+  // a manual page reload.
   useEffect(() => {
-    if (!job || ['done', 'failed', 'cancelled'].includes(job.status)) return;
+    if (!job) return;
+    const reviewSettling = job.status === 'done' && ['pending', 'running'].includes(job.reviewerStatus);
+    if (['failed', 'cancelled'].includes(job.status) || (job.status === 'done' && !reviewSettling)) return;
     const interval = setInterval(refresh, 1500);
     return () => clearInterval(interval);
   }, [job, refresh]);

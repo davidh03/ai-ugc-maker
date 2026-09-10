@@ -3,12 +3,13 @@ import { promisify } from 'node:util';
 import { copyFileSync, mkdirSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pickComposer } from './composer/index.js';
-import { upsertJob } from './store.js';
+import { loadJobs, upsertJob } from './store.js';
 import { config } from './config.js';
 import { enrichBrief } from './youtubeTranscript.js';
 import { generateMusicBed } from './musicBed.js';
 import { updateWorkflow } from './workflow.js';
 import { analyzeAssets } from './assetAnalyzer.js';
+import { optimizeAssets, applyOptimizedAssets } from './assetOptimizer.js';
 import { enrichBriefWithWebReferences } from './webResearch.js';
 import { synthesizeGoogleVoiceover } from './googleTts.js';
 import { synthesizeOpenAIVoiceover } from './openaiTts.js';
@@ -23,6 +24,8 @@ import { buildAudioConcatPlan } from './audioConcatPlan.js';
 import { validateSceneTimings } from './sceneTimingValidation.js';
 import { probeDurationSec } from './mediaProbe.js';
 import { resolveSoftCapTempo } from './voiceoverTempo.js';
+import { createRevision } from './jobs.js';
+import { normalizeReviewerLimit, reviewVideoWithCodex, runReviewerLoop } from './aiReviewer.js';
 
 const execFileP = promisify(execFile);
 
@@ -71,16 +74,38 @@ async function resolveVoiceover(job, outputDir) {
   return { voiceoverPath, reused: false };
 }
 
+function tryParseJson(value) {
+  try { return JSON.parse(value); } catch { return undefined; }
+}
+
+// The composer is asked to embed the spoken narration as
+// window.__voiceoverScript = "<a JSON string>" (a plain string), but an
+// agent occasionally instead writes a structured payload — e.g.
+// '{"segments":[{"start":0.3,"end":14.5,"text":"..."}],"fullText":"..."}' —
+// wrapped in single quotes rather than a bare double-quoted string.
+// JSON.parse rejects the outer single quotes outright, so without this the
+// real narration silently vanishes and the pipeline falls back to a generic
+// ad-copy script that just paraphrases the brief instead. Unwrap one layer
+// of single quotes and accept a fullText/text/segments[].text shape too, so
+// a well-formed-but-differently-shaped script still gets used.
 export function extractVoiceoverScript(html = '') {
   const match = String(html).match(/^\s*window\.__voiceoverScript\s*=\s*(.+);\s*$/m);
   if (!match) return '';
   const raw = match[1].trim();
-  try {
-    const parsed = JSON.parse(raw);
-    return typeof parsed === 'string' ? parsed.trim() : '';
-  } catch {
-    return '';
+  let parsed = tryParseJson(raw);
+  if (parsed === undefined && raw.length >= 2 && raw[0] === "'" && raw[raw.length - 1] === "'") {
+    parsed = tryParseJson(raw.slice(1, -1));
   }
+  if (typeof parsed === 'string') return parsed.trim();
+  if (parsed && typeof parsed === 'object') {
+    if (typeof parsed.fullText === 'string' && parsed.fullText.trim()) return parsed.fullText.trim();
+    if (typeof parsed.text === 'string' && parsed.text.trim()) return parsed.text.trim();
+    if (Array.isArray(parsed.segments)) {
+      const joined = parsed.segments.map(segment => typeof segment?.text === 'string' ? segment.text.trim() : '').filter(Boolean).join(' ');
+      if (joined) return joined;
+    }
+  }
+  return '';
 }
 
 // Synthesizes one TTS clip per structured-script scene (instead of one clip
@@ -232,6 +257,14 @@ export async function runJob(job) {
         else update(job, { stage: 'web-research', workflowStatus: 'done', progress: 100 });
       } catch (e) { console.warn('web research skipped:', e.message); }
       if (job.assets?.length) { update(job, { stage: 'asset-analysis', progress: 0 }); const assetManifest = await analyzeAssets(job.assets, config.dataDir); update(job, { stage: 'asset-analysis', workflowStatus: 'done', progress: 100, assetManifest }); }
+      if (job.assets?.some(asset => asset.category === 'image')) {
+        update(job, { stage: 'asset-optimization', progress: 0 });
+        try {
+          const optimizations = await optimizeAssets(job.assets, job.assetManifest || [], { dataDir: config.dataDir, outputDir });
+          job.assets = applyOptimizedAssets(job.assets, optimizations);
+          update(job, { stage: 'asset-optimization', workflowStatus: 'done', progress: 100, assets: job.assets, assetOptimization: optimizations });
+        } catch (e) { console.warn('asset optimization skipped:', e.message); update(job, { stage: 'asset-optimization', workflowStatus: 'failed', error: String(e?.message || e).slice(0, 300) }); }
+      }
       update(job, { stage: 'composing' });
       try { const { brief, meta } = await enrichBrief(job.brief); if (meta.detected) { job.brief = brief; job.transcript = meta; update(job, { brief, transcript: meta }); } } catch (e) { console.warn('transcript enrichment skipped:', e.message); }
       compositionDir = await composer.compose(job); throwIfCancelled(job);
@@ -265,7 +298,8 @@ export async function runJob(job) {
       throwIfCancelled(job); update(job, { stage: 'linting' }); await lintComposition(compositionDir).catch(e => console.warn('lint skipped:', e.message));
       throwIfCancelled(job); update(job, { stage: 'rendering', progress: 0 }); await renderViaCli(compositionDir, job);
       let tmpOutput = path.join(compositionDir, 'output.mp4'); if (!existsSync(tmpOutput)) { const rendersDir = path.join(compositionDir, 'renders'); if (existsSync(rendersDir)) { const files = readdirSync(rendersDir).filter(f => f.endsWith('.mp4')); if (files.length > 0) tmpOutput = path.join(rendersDir, files[0]); } }
-      if (existsSync(tmpOutput)) { mkdirSync(outputDir, { recursive: true }); copyFileSync(tmpOutput, finalOutput); const cleanOutput = path.join(outputDir, 'clean-video.mp4'); copyFileSync(tmpOutput, cleanOutput); job.artifactManifest = { ...(job.artifactManifest || {}), cleanVideo: { relPath: 'jobs/' + job.id + '/clean-video.mp4', sourceJobId: job.id }, finalVideo: { relPath: 'jobs/' + job.id + '/output.mp4', sourceJobId: job.id } }; update(job, { artifactManifest: job.artifactManifest }); }
+      if (!existsSync(tmpOutput)) throw new Error('Renderer completed without producing output.mp4');
+      { mkdirSync(outputDir, { recursive: true }); copyFileSync(tmpOutput, finalOutput); const cleanOutput = path.join(outputDir, 'clean-video.mp4'); copyFileSync(tmpOutput, cleanOutput); job.artifactManifest = { ...(job.artifactManifest || {}), cleanVideo: { relPath: 'jobs/' + job.id + '/clean-video.mp4', sourceJobId: job.id }, finalVideo: { relPath: 'jobs/' + job.id + '/output.mp4', sourceJobId: job.id } }; update(job, { artifactManifest: job.artifactManifest }); }
     }
 
     // Music toggle: mix a bed under the video (user music asset, else a
@@ -275,16 +309,60 @@ export async function runJob(job) {
     if ((job.music || job.voiceover) && existsSync(finalOutput)) {
       update(job, { stage: 'music-mix', progress: 0 });
       try { await mixAudioBed(job, finalOutput); }
-      catch (e) { console.warn('music mix skipped:', e.message); update(job, { stage: 'music-mix', workflowStatus: 'failed', error: String(e?.message || e).slice(0, 300) }); }
+      catch (e) { if (job.voiceover) throw e; console.warn('music mix skipped:', e.message); update(job, { stage: 'music-mix', workflowStatus: 'failed', degraded: { music: String(e?.message || e).slice(0, 300) } }); }
     }
 
-    update(job, { stage: 'complete', status: 'done', progress: 100, outputRel: 'jobs/' + job.id + '/output.mp4', finishedAt: Date.now() });
+    if (!existsSync(finalOutput)) throw new Error('Final output artifact is missing');
+    const probe = await execFileP('ffprobe', ['-v', 'error', '-show_entries', 'format=duration:stream=codec_type', '-of', 'json', finalOutput]);
+    const media = JSON.parse(probe.stdout); const streams = media.streams || [];
+    if (!streams.some(stream => stream.codec_type === 'video')) throw new Error('Final output has no video stream');
+    if (job.voiceover && !streams.some(stream => stream.codec_type === 'audio')) throw new Error('Voiceover-enabled output has no audio stream');
+    const duration = Number(media.format?.duration); if (!Number.isFinite(duration) || duration <= 0) throw new Error('Final output has invalid duration');
+    update(job, { finalArtifactValidation: { passed: true, durationSec: duration, hasVideo: true, hasAudio: streams.some(stream => stream.codec_type === 'audio') } });
+    update(job, { stage: 'complete', status: 'done', progress: 100, outputRel: 'jobs/' + job.id + '/output.mp4', finishedAt: Date.now(), reviewerStatus: job.autoReview === false ? 'disabled' : 'pending' });
+    if (job.autoReview !== false) void runPostRenderReview(job).catch(error => update(job, error?.name === 'AbortError' ? { stage: 'reviewing', reviewerStatus: 'cancelled', reviewerError: 'Review cancelled' } : { stage: 'reviewing', workflowStatus: 'failed', reviewerStatus: 'failed', reviewerError: String(error?.message || error).slice(0, 500) }));
   } catch (err) {
     const cancelled = err?.name === 'AbortError';
     update(job, cancelled
       ? { status: 'cancelled', finishedAt: Date.now() }
       : { status: 'failed', error: String(err?.message || err).slice(0, 500), finishedAt: Date.now() });
   } finally { cancellationSignals.delete(job.id); cancelledJobs.delete(job.id); }
+}
+
+async function runPostRenderReview(job) {
+  const maxIterations = normalizeReviewerLimit(job.maxReviewerIterations ?? process.env.AI_REVIEWER_MAX_ITERATIONS);
+  throwIfCancelled(job);
+  update(job, { stage: 'reviewing', reviewerStatus: 'running', reviewerMaxIterations: maxIterations });
+  const result = await runReviewerLoop({
+    maxIterations,
+    initialCandidate: job,
+    review: candidate => reviewVideoWithCodex(candidate, path.join(config.dataDir, 'jobs', candidate.id)),
+    regenerate: async ({ iteration, scope, findings, candidate }) => {
+      throwIfCancelled(job);
+      const familyRoot = candidate.sourceJobId || candidate.id;
+      const family = loadJobs().filter(item => (item.sourceJobId || item.id) === familyRoot);
+      const revisionNumber = Math.max(0, ...family.map(item => Number(item.revisionNumber) || 0)) + 1;
+      const attemptKey = `${job.id}:${iteration}:${scope.join(',')}`;
+      const completedAttempts = Array.isArray(job.reviewerCompletedAttempts) ? job.reviewerCompletedAttempts : [];
+      const existingAttempt = loadJobs().find(item => item.reviewerParentJobId === job.id && item.reviewerAttemptKey === attemptKey);
+      if (existingAttempt) return existingAttempt;
+      update(job, { reviewerActiveAttempt: attemptKey, reviewerActiveIteration: iteration });
+      const correction = `[AI REVIEW CORRECTION] Fix only these verified categories: ${scope.join(', ')}. Findings: ${findings.map(item => `${item.category}: ${item.issue} Evidence: ${item.evidence || 'not supplied'}${item.recommendation ? ` Recommendation: ${item.recommendation}` : ''}`).join(' | ')}. Preserve every unrelated scene, asset, narration, timing, and brand decision.`;
+      const child = createRevision(candidate, { changeRequest: correction, settings: candidate.effectiveSettings || candidate, autoReview: false }, revisionNumber);
+      child.autoReview = false;
+      child.reviewerParentJobId = job.id;
+      child.reviewerIteration = iteration;
+      child.reviewerAttemptKey = attemptKey;
+      child.maxReviewerIterations = maxIterations;
+      child.workflow = (child.workflow || []).map(node => node.id === 'ai-reviewer' ? { ...node, enabled: false, status: 'skipped' } : node);
+      upsertJob(child);
+      await runJob(child);
+      if (child.status !== 'done') throw new Error(`Reviewer correction ${iteration} failed: ${child.error || 'unknown error'}`);
+      return child;
+    },
+  });
+    const acceptedPreferredJobId = result.satisfied ? (result.candidate?.id || job.id) : (job.preferredJobId || job.id);
+  update(job, { stage: 'reviewing', workflowStatus: result.satisfied ? 'done' : 'failed', reviewerStatus: result.satisfied ? 'satisfied' : 'max_iterations', reviewerIterations: result.iterations, reviewerFindings: result.finalReview.findings, reviewerSummary: result.finalReview.summary, reviewerHistory: result.history, preferredJobId: acceptedPreferredJobId, reviewerLatestCandidateId: result.candidate?.id || job.id });
 }
 
 async function lintComposition(dir) {

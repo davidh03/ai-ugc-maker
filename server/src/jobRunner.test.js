@@ -15,6 +15,22 @@ describe('voiceover script extraction', () => {
     assert.equal(extractVoiceoverScript('<script>window.__voiceoverScript = not-json;</script>'), '');
     assert.equal(extractVoiceoverScript('<script>window.__voiceoverDirection = \"warm\";</script>'), '');
   });
+  it('unwraps a single-quoted structured payload (segments+fullText) instead of silently discarding it', () => {
+    const html = `<script>\nwindow.__voiceoverScript = '{"segments":[{"start":0.3,"end":14.5,"text":"Together, with discipline and purpose, we build tomorrow."}],"fullText":"Together, with discipline and purpose, we build tomorrow."}';\n</script>`;
+    assert.equal(extractVoiceoverScript(html), 'Together, with discipline and purpose, we build tomorrow.');
+  });
+  it('falls back to a bare "text" field when there is no fullText', () => {
+    const html = `<script>\nwindow.__voiceoverScript = '{"text":"Just this line."}';\n</script>`;
+    assert.equal(extractVoiceoverScript(html), 'Just this line.');
+  });
+  it('joins segment text in order when there is neither fullText nor text', () => {
+    const html = `<script>\nwindow.__voiceoverScript = '{"segments":[{"text":"Line one."},{"text":"Line two."}]}';\n</script>`;
+    assert.equal(extractVoiceoverScript(html), 'Line one. Line two.');
+  });
+  it('still returns empty for a single-quoted payload with no usable text field', () => {
+    const html = `<script>\nwindow.__voiceoverScript = '{"segments":[]}';\n</script>`;
+    assert.equal(extractVoiceoverScript(html), '');
+  });
 });
 
 describe('script-driven duration (voiceover dictates duration, structured script)', () => {

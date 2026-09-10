@@ -25,8 +25,15 @@ function getJobsFile() {
 export function loadJobs() {
   const f = getJobsFile();
   if (!existsSync(f)) return [];
-  try { return JSON.parse(readFileSync(f, 'utf8')).map(migrateWorkflow); }
-  catch { return []; }
+  try {
+    const parsed = JSON.parse(readFileSync(f, 'utf8'));
+    if (!Array.isArray(parsed)) throw new Error('jobs store must be an array');
+    return parsed.map(migrateWorkflow);
+  } catch (error) {
+    const quarantine = f + '.corrupt';
+    try { if (!existsSync(quarantine)) renameSync(f, quarantine); } catch (quarantineError) { throw new Error(`Jobs store is unreadable and could not be quarantined: ${quarantineError.message}`); }
+    throw new Error(`Jobs store is corrupt; preserved at ${quarantine}: ${error.message}`);
+  }
 }
 
 export function saveJobs(jobs) {

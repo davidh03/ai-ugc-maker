@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getJobs, postJob, deleteJob as apiDeleteJob } from '../api/client';
+import { getJobs, postJob, deleteJob as apiDeleteJob, toggleFavorite as apiToggleFavorite } from '../api/client';
 
 export function useJobs() {
   const [jobs, setJobs] = useState([]);
@@ -27,15 +27,30 @@ export function useJobs() {
     setJobs(prev => prev.filter(job => job.id !== id));
   }, []);
 
+  const toggleFavorite = useCallback(async (id) => {
+    // Flip optimistically so the star responds instantly; reconcile with
+    // whatever the server actually persisted once the request resolves.
+    setJobs(prev => prev.map(job => job.id === id ? { ...job, favorite: !job.favorite } : job));
+    try {
+      const updated = await apiToggleFavorite(id);
+      setJobs(prev => prev.map(job => job.id === id ? updated : job));
+    } catch (err) {
+      setJobs(prev => prev.map(job => job.id === id ? { ...job, favorite: !job.favorite } : job));
+      throw err;
+    }
+  }, []);
+
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Poll while any job is active
+  // Poll while any job is active, including a 'done' job whose AI reviewer
+  // is still pending/running in the background (status stays 'done' the
+  // whole time it works, so it wouldn't otherwise count as active).
   useEffect(() => {
-    const hasActive = jobs.some(j => j.status === 'queued' || j.status === 'running');
+    const hasActive = jobs.some(j => j.status === 'queued' || j.status === 'running' || (j.status === 'done' && ['pending', 'running'].includes(j.reviewerStatus)));
     if (!hasActive) return;
     const interval = setInterval(refresh, 2000);
     return () => clearInterval(interval);
   }, [jobs, refresh]);
 
-  return { jobs, loading, createJob, removeJob, refresh };
+  return { jobs, loading, createJob, removeJob, toggleFavorite, refresh };
 }

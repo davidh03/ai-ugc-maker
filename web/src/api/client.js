@@ -4,6 +4,7 @@ export const postJob = data => fetchJson('/jobs', { method: 'POST', body: JSON.s
 export const getJobs = () => fetchJson('/jobs');
 export const getJob = id => fetchJson('/jobs/' + id);
 export const cancelJob = id => fetchJson('/jobs/' + id + '/cancel', { method: 'POST' });
+export const toggleFavorite = id => fetchJson('/jobs/' + id + '/favorite', { method: 'POST' });
 export const deleteJob = id => fetchJson('/jobs/' + id, { method: 'DELETE' });
 export async function getModels(provider = 'opencode') { const data = await fetchJson('/providers/models?provider=' + encodeURIComponent(provider)); return data.models || []; }
 export async function getVoices(provider) { const data = await fetchJson('/providers/voices?provider=' + encodeURIComponent(provider)); return data.voices || []; }
@@ -16,3 +17,4 @@ export function getOutputUrl(id) { return BASE + '/jobs/' + id + '/output'; }
 export function getThumbnailUrl(id) { return BASE + '/jobs/' + id + '/thumbnail'; }
 export const getRevisionPlan = (id, data, options = {}) => fetchJson('/jobs/' + id + '/revision-plan', { ...options, method: 'POST', body: JSON.stringify(data) });
 export const createRevision = (id, data) => fetchJson('/jobs/' + id + '/revisions', { method: 'POST', body: JSON.stringify(data) });
+export const rerenderJob = id => fetchJson('/jobs/' + id + '/rerender', { method: 'POST' });
