@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { copyFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
+import { copyFileSync, mkdirSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pickComposer } from './composer/index.js';
 import { upsertJob } from './store.js';
@@ -15,22 +15,16 @@ import { synthesizeOpenAIVoiceover } from './openaiTts.js';
 import { synthesizeMiniMaxVoiceover } from './minimaxTts.js';
 import { synthesizeCartesiaVoiceover } from './cartesiaTts.js';
 import { buildNarrationScript } from './narration.js';
-import { parsePresentationScript, narrationPlanPrompt } from './scriptParser.js';
+import { parsePresentationScript, narrationPlanPrompt, applyMeasuredSceneDurations, extractExplicitNarration } from './scriptParser.js';
 import { optimizePrompt } from './promptOptimizer.js';
 import { validateAssetBindings } from './revisionAssetBindings.js';
 import { buildAudioMixPlan, materializeAudioMixArgs } from './audioMixPlan.js';
-
+import { buildAudioConcatPlan } from './audioConcatPlan.js';
+import { validateSceneTimings } from './sceneTimingValidation.js';
+import { probeDurationSec } from './mediaProbe.js';
+import { resolveSoftCapTempo } from './voiceoverTempo.js';
 
 const execFileP = promisify(execFile);
-
-async function probeDurationSec(filePath) {
-  if (!existsSync(filePath)) return null;
-  try {
-    const probe = await execFileP('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', filePath]);
-    const value = Number(probe.stdout.trim());
-    return Number.isFinite(value) && value > 0 ? value : null;
-  } catch { return null; }
-}
 
 // When a structured Scene/Timecode script is provided, its own timecodes are
 // the authoritative duration source in voiceover-driven mode — no synthesis
@@ -71,7 +65,7 @@ async function resolveVoiceover(job, outputDir) {
     }
     job.reuseVoiceoverFrom = '';
   }
-  if (!job.voiceoverScript) job.voiceoverScript = buildNarrationScript({ brief: job.brief, style: job.style, durationSec: job.durationSec });
+  if (!job.voiceoverScript) job.voiceoverScript = extractExplicitNarration(job.brief) || buildNarrationScript({ brief: job.brief, style: job.style, durationSec: job.durationSec });
   const { synthesize, voiceOptions } = pickVoiceoverSynth(job);
   job.voiceoverMeta = await synthesize(job.voiceoverScript, voiceoverPath, voiceOptions);
   return { voiceoverPath, reused: false };
@@ -88,6 +82,61 @@ export function extractVoiceoverScript(html = '') {
     return '';
   }
 }
+
+// Synthesizes one TTS clip per structured-script scene (instead of one clip
+// for the whole narration) so each scene's real, measured audio length can
+// become its actual on-timeline duration — no proportional guessing needed.
+// Works with any configured provider: pickVoiceoverSynth already abstracts
+// the provider away to a plain (text, outputPath, voiceOptions) call.
+//
+// The user's requested duration (job.durationSec, as entered before this
+// runs) is kept as a soft cap, not discarded: natural narration length wins
+// up to a tolerance, and only a large overrun gets pulled back, via a
+// uniform tempo change rather than a hard cut. See resolveSoftCapTempo.
+export async function synthesizeScenesVoiceover(job, scenes, outputDir) {
+  mkdirSync(outputDir, { recursive: true });
+  const targetDurationSec = Number(job.durationSec) > 0 ? Number(job.durationSec) : null;
+  const { synthesize, voiceOptions } = pickVoiceoverSynth(job);
+  const segments = [];
+  const durations = [];
+  const perScene = [];
+  let sharedMeta = null;
+  for (let index = 0; index < scenes.length; index++) {
+    const scene = scenes[index];
+    const text = (scene.voiceover || '').trim();
+    const briefDurationSec = Math.max(1, Math.round(Number(scene.endSec) - Number(scene.startSec)) || 1);
+    if (!text) {
+      // No line to speak (e.g. a narration-free outro) — hold it silent for
+      // as long as the brief originally reserved for that scene.
+      segments.push({ silence: true, durationSec: briefDurationSec });
+      durations.push(briefDurationSec);
+      perScene.push({ index, silent: true, durationSec: briefDurationSec });
+      continue;
+    }
+    const sceneAudioPath = path.join(outputDir, `scene-${index + 1}-voiceover.mp3`);
+    const meta = await synthesize(text, sceneAudioPath, voiceOptions);
+    sharedMeta ||= meta;
+    const measured = await probeDurationSec(sceneAudioPath);
+    const durationSec = measured || briefDurationSec;
+    segments.push({ path: sceneAudioPath });
+    durations.push(durationSec);
+    perScene.push({ index, silent: false, durationSec, measured: Boolean(measured) });
+  }
+  const naturalTotalSec = durations.reduce((sum, value) => sum + value, 0);
+  const tempo = resolveSoftCapTempo(naturalTotalSec, targetDurationSec);
+  const voiceoverPath = path.join(outputDir, 'voiceover.mp3');
+  const plan = buildAudioConcatPlan(segments, voiceoverPath, { tempo });
+  await execFileP('ffmpeg', plan.args);
+  // atempo speeds up playback uniformly, so every scene's real duration on
+  // the final track shrinks by the same factor — reflect that in the
+  // timings we hand to the composer, or visuals would outlast the audio.
+  const finalDurations = tempo === 1 ? durations : durations.map(value => value / tempo);
+  const sceneTimings = applyMeasuredSceneDurations(scenes, finalDurations);
+  const totalDurationSec = sceneTimings.length ? sceneTimings[sceneTimings.length - 1].endSec : 0;
+  const voiceoverMeta = sharedMeta ? { ...sharedMeta, script: scenes.map(scene => scene.voiceover).filter(Boolean).join(' '), outputPath: voiceoverPath, perScene, tempo, naturalTotalSec, requestedDurationSec: targetDurationSec } : null;
+  return { voiceoverPath, sceneTimings, totalDurationSec, voiceoverMeta, tempo, naturalTotalSec, requestedDurationSec: targetDurationSec };
+}
+
 const cancellationSignals = new Map();
 const cancelledJobs = new Set();
 const runtimeEnv = { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH || ''}` };
@@ -126,12 +175,39 @@ export async function runJob(job) {
       const parsedScript = parsePresentationScript(job.brief);
       if (parsedScript.detected) {
         job.originalBrief = job.originalBrief || job.brief;
-        job.narrationPlan = parsedScript;
-        job.voiceoverScript = parsedScript.script;
         job.voiceoverLocked = true;
-        job.compositionBrief = parsedScript.scenes.map(scene => `${scene.title} (${scene.startSec}-${scene.endSec}s): ${scene.visual}${scene.onScreen ? ` On screen: ${scene.onScreen}.` : ''}`).join(' ') + (job.revisionReason ? ` REVISION REQUEST: ${job.revisionReason}` : '');
-        if (job.durationMode === 'voiceover' && job.voiceover) job.durationSec = resolveScriptDrivenDurationSec(parsedScript, job.durationSec);
-        update(job, { originalBrief: job.originalBrief, compositionBrief: job.compositionBrief, narrationPlan: parsedScript, voiceoverScript: parsedScript.script, durationSec: job.durationSec });
+        const buildCompositionBrief = scenes => scenes.map(scene => `${scene.title} (${scene.startSec.toFixed(2)}-${scene.endSec.toFixed(2)}s${scene.id ? `, REQUIRED data-start=${scene.startSec.toFixed(2)} data-duration=${scene.durationSec.toFixed(2)}` : ''}): ${scene.visual}${scene.onScreen ? ` On screen: ${scene.onScreen}.` : ''}`).join(' ') + (job.revisionReason ? ` REVISION REQUEST: ${job.revisionReason}` : '');
+        if (job.durationMode === 'voiceover' && job.voiceover) {
+          // Sync-first mode: synthesize each scene's line separately, measure
+          // its real length, and let THAT — not the brief's guessed timecodes
+          // — drive every scene's data-start/data-duration. See
+          // synthesizeScenesVoiceover for why (proportionally rescaling one
+          // guessed total duration lets individual scene cuts drift from
+          // where their line is actually spoken).
+          //
+          // The user's chosen duration is a soft cap here, not a hard target:
+          // natural narration length wins within tolerance, and only a large
+          // overrun gets pulled back (via tempo, not a cut) — see
+          // resolveSoftCapTempo.
+          update(job, { stage: 'voiceover', progress: 0 });
+          const requestedDurationSec = job.durationSec;
+          const { sceneTimings, totalDurationSec, voiceoverMeta, tempo, naturalTotalSec } = await synthesizeScenesVoiceover(job, parsedScript.scenes, outputDir);
+          job.narrationPlan = { ...parsedScript, scenes: sceneTimings, timingSource: 'measured' };
+          job.voiceoverScript = parsedScript.script;
+          job.requestedDurationSec = requestedDurationSec;
+          job.voiceoverTempo = tempo;
+          job.durationSec = Math.max(1, Math.ceil(totalDurationSec));
+          job.compositionBrief = buildCompositionBrief(sceneTimings);
+          job.voiceoverPreSynthesized = true;
+          if (voiceoverMeta) job.voiceoverMeta = voiceoverMeta;
+          if (tempo !== 1) console.warn(`job ${job.id}: narration ran ${naturalTotalSec.toFixed(1)}s vs a ${requestedDurationSec}s target — sped up ${tempo.toFixed(2)}x to ${totalDurationSec.toFixed(1)}s`);
+          update(job, { stage: 'voiceover', workflowStatus: 'done', progress: 100, originalBrief: job.originalBrief, compositionBrief: job.compositionBrief, narrationPlan: job.narrationPlan, voiceoverScript: job.voiceoverScript, durationSec: job.durationSec, voiceoverMeta: job.voiceoverMeta, requestedDurationSec: job.requestedDurationSec, voiceoverTempo: job.voiceoverTempo });
+        } else {
+          job.narrationPlan = parsedScript;
+          job.voiceoverScript = parsedScript.script;
+          job.compositionBrief = buildCompositionBrief(parsedScript.scenes);
+          update(job, { originalBrief: job.originalBrief, compositionBrief: job.compositionBrief, narrationPlan: parsedScript, voiceoverScript: parsedScript.script, durationSec: job.durationSec });
+        }
       }
       if (!parsedScript.detected && job.composer === 'agent') {
         update(job, { stage: 'prompt-optimizing', progress: 0 });
@@ -159,8 +235,16 @@ export async function runJob(job) {
       update(job, { stage: 'composing' });
       try { const { brief, meta } = await enrichBrief(job.brief); if (meta.detected) { job.brief = brief; job.transcript = meta; update(job, { brief, transcript: meta }); } } catch (e) { console.warn('transcript enrichment skipped:', e.message); }
       compositionDir = await composer.compose(job); throwIfCancelled(job);
+      if (job.narrationPlan?.timingSource === 'measured') {
+        try {
+          const composedHtml = readFileSync(path.join(compositionDir, 'index.html'), 'utf8');
+          job.sceneTimingValidation = validateSceneTimings(composedHtml, job.narrationPlan.scenes);
+          if (!job.sceneTimingValidation.passed) console.warn(`scene timing drift for job ${job.id}:`, JSON.stringify(job.sceneTimingValidation.mismatches));
+          update(job, { sceneTimingValidation: job.sceneTimingValidation });
+        } catch (e) { console.warn('scene timing validation skipped:', e.message); }
+      }
       try { const { readFile } = await import('node:fs/promises'); const html = await readFile(path.join(compositionDir, 'index.html'), 'utf8'); const extracted = extractVoiceoverScript(html); if (extracted && !job.voiceoverLocked) job.voiceoverScript = extracted; if (job.assetBindings?.length) { const aliased = job.assetBindings.map(b => ({ ...b, sourceId: (html.indexOf('id="' + b.sourceId + '"') >= 0 || html.indexOf('class="' + b.sourceId) >= 0) ? b.sourceId : (b.targetKind === 'header-logo' ? 'brand-pill' : b.targetKind === 'operator-person' ? 'operator-visual panel' : b.targetKind === 'outro' ? 'outro-lockup' : b.sourceId) })); job.revisionValidation = { ...(job.revisionValidation || {}), assetBindings: validateAssetBindings(html, aliased) }; if (!job.revisionValidation.assetBindings.passed) { const missing = job.revisionValidation.assetBindings.results.filter(item => item.required && !item.satisfied).map(item => `${item.filename} at ${item.targetKind}`); throw new Error(`Required asset bindings missing: ${missing.join(', ')}`); } } } catch (error) { if (job.assetBindings?.length) throw error; /* fallback below */ }
-      if (!job.voiceoverScript) job.voiceoverScript = buildNarrationScript({ brief: job.brief, style: job.style, durationSec: job.durationSec });
+      if (!job.voiceoverScript) job.voiceoverScript = extractExplicitNarration(job.brief) || buildNarrationScript({ brief: job.brief, style: job.style, durationSec: job.durationSec });
     }
 
     if (job.voiceover && !job.voiceoverPreSynthesized) {
