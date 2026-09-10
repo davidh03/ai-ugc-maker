@@ -28,22 +28,50 @@ Done and test-covered:
   log lines (`server/src/logger.js`). The rest of the codebase's existing
   `console.*` calls were intentionally left alone — see "Not done" below.
 
-**Not build/deploy-tested** (no Docker daemon and no AWS resources exist in
-the environment this was written in):
-- `deploy/Dockerfile` — a best-effort image based on what `hyperframes
-  doctor` reports this app actually needs (headless Chrome via Puppeteer's
-  own download, not a system `chromium` package; ffmpeg; ImageMagick).
-  Phase 2 of the plan ("containerize and run locally") is exactly this
-  validation step — do not treat this Dockerfile as verified until you've
-  actually run `docker compose -f deploy/docker-compose.production.yml build`
-  and rendered one real test video through the container.
-- `deploy/docker-compose.production.yml`, `deploy/Caddyfile` — untested for
-  the same reason.
+**Phase 2 — actually built and run** (Docker was installed for this;
+`docker.io`'s Debian package does NOT include the `docker compose` plugin —
+`apt install docker-compose` for the standalone v2 CLI, or `docker-compose`
+instead of `docker compose` in every command below, on a box provisioned the
+same way):
+- `deploy/Dockerfile` builds clean, `hyperframes browser ensure` downloads
+  chrome-headless-shell during the build as intended, and a real job (POST
+  `/api/jobs` → poll → GET `.../output`) rendered a genuine 1920×1080 6s MP4
+  end-to-end inside the container — ffmpeg/ffprobe/Chrome all resolved
+  correctly, no system `chromium` package needed.
+- Two real bugs were caught by this and fixed (not by static review — both
+  needed an actual container running to surface):
+  1. **No `.dockerignore` existed.** `COPY . .` in the build stage was
+     copying `server/data/` — the *actual* job history and rendered
+     videos on this machine — straight into the image, which would have
+     shipped real user data into `deploy.yml`'s ECR push. Fixed by adding
+     `.dockerignore` (mirrors `.gitignore`). Verified the rebuilt image has
+     an empty `server/data/` (and dropped from 5.94GB to 2.71GB).
+  2. **`markRunningJobsInterrupted()` had a race.** It called `cancelJob()`
+     before persisting the interrupted state; `cancelJob()` triggers
+     `runJob`'s own async `AbortError` → `update(job, {status:'cancelled'})`
+     path, which lands on a later tick and silently overwrote the
+     `failed`/`recoverable:true` write — observed via a real
+     `docker stop` mid-render, not caught by the unit tests (which mock the
+     render and never exercise that async path). Fixed by dropping the
+     `cancelJob()` call — the whole process/container is exiting anyway, so
+     nothing needs to explicitly kill the child render process on the way
+     out. Re-verified with the same real mid-render `docker stop`, and
+     separately with a hard `docker kill -s SIGKILL` to confirm
+     `reconcileOrphanedJobs` catches a true crash on the next startup.
+  3. Data-volume persistence across `docker stop`/`start` (with a real named
+     volume, not a bind mount) was also confirmed directly.
+
+**Still not tested** (no AWS resources exist yet):
 - `.github/workflows/deploy.yml` — cannot run until Phase 3's AWS resources
   (ECR repo, EC2 instance with the SSM agent, an OIDC IAM role) exist. It's
   gated off (`vars.AWS_DEPLOY_ENABLED`) specifically so it doesn't fail on
   every push in the meantime. Expect to debug the SSM shell-escaping the
   first time it actually runs against a real instance.
+- `deploy/Caddyfile` (TLS/reverse-proxy behavior specifically — the app
+  behind it is now verified).
+- Load/duration behavior on a real longer render (only a 6s template-composer
+  video was tested here) — re-check the `shm_size: 2gb` guess in
+  `docker-compose.production.yml` once you've measured one.
 
 ## Not done (explicitly out of scope for this pass)
 
@@ -109,8 +137,8 @@ in addition to Basic Auth if you want that, not instead of it.
 ```bash
 cp .env.example server/.env.production   # fill in real keys; never commit this file
 cd deploy
-docker compose -f docker-compose.production.yml build
-docker compose -f docker-compose.production.yml up
+docker-compose -f docker-compose.production.yml build   # or `docker compose` if your box has the plugin
+docker-compose -f docker-compose.production.yml up
 curl http://127.0.0.1:8787/api/health
 curl http://127.0.0.1:8787/api/ready
 # generate one short test video end-to-end before trusting the image

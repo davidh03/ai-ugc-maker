@@ -356,14 +356,23 @@ export function reconcileOrphanedJobs() {
 }
 
 // Graceful shutdown: mark every job this process is actively driving as
-// interrupted (and attempt to cancel its child render process) before the
-// process exits, rather than leaving it for reconcileOrphanedJobs to guess
-// about on the next startup. Call from a SIGINT/SIGTERM handler before
-// closing the HTTP server.
+// interrupted before the process exits, rather than leaving it for
+// reconcileOrphanedJobs to guess about on the next startup. Call from a
+// SIGINT/SIGTERM handler before closing the HTTP server.
+//
+// Deliberately does NOT call cancelJob() here: that triggers runJob's own
+// AbortController-based cancellation, which lands its own async update()
+// (status:'cancelled') on a later tick — racing this function's write and
+// silently winning, verified by running an actual container through a
+// real SIGTERM-mid-render (a unit test with a mocked render can't catch
+// this, since it never exercises the real async cancel path). The render's
+// child process doesn't need an explicit kill here either: the whole
+// process (and its child processes) is about to exit, and Docker/systemd
+// tear down the container/process group regardless of what this process
+// does on the way out.
 export function markRunningJobsInterrupted() {
   const ids = [...activeJobIds];
   for (const id of ids) {
-    cancelJob(id);
     const job = loadJobs().find(item => item.id === id);
     if (!job) continue;
     upsertJob({ ...job, status: 'failed', error: 'Server shut down during generation — re-render required', recoverable: true, finishedAt: Date.now() });

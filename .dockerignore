@@ -1,0 +1,14 @@
+node_modules
+server/node_modules
+web/node_modules
+server/data
+server/renders
+web/dist
+*.mp4
+.env
+.env.*
+!.env.example
+.git
+.DS_Store
+.hermes
+docs
