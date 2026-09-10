@@ -20,7 +20,7 @@ export const templateComposer = {
       : sourceBrief;
 
     const html = preset.html(brief, durationSec);
-    job.voiceoverScript = buildNarrationScript({ brief, style: job.style, durationSec });
+    if (!job.voiceoverScript) job.voiceoverScript = buildNarrationScript({ brief, style: job.style, durationSec });
 
     // Write to job workspace
     const jobDir = path.join(__dirname, '..', '..', 'data', 'jobs', job.id);

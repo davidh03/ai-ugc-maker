@@ -1,99 +1,56 @@
-import { useParams, Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useJob } from '../hooks/useJob';
+import { useJobs } from '../hooks/useJobs';
+import { useProviderModels } from '../hooks/useProviderModels';
+import { useProviderVoices } from '../hooks/useProviderVoices';
+import { createRevision, getRevisionPlan, getOutputUrl } from '../api/client';
 import JobStatusBadge from '../components/JobStatusBadge';
 import ProgressBar from '../components/ProgressBar';
 import WorkflowGraph from '../components/WorkflowGraph';
-
 import VideoPlayer from '../components/VideoPlayer';
+import AssetUpload from '../components/AssetUpload';
+
+const VOICES = {
+  'openai-tts': [['coral', 'Coral · warm'], ['alloy', 'Alloy · balanced'], ['nova', 'Nova · upbeat'], ['shimmer', 'Shimmer · clear']],
+  'minimax-tts': [['English_expressive_narrator', 'Expressive narrator'], ['English_CalmLady', 'Calm lady'], ['English_Trustworth_Man', 'Trustworthy man']],
+  'google-cloud-tts': [['en-US-Neural2-F', 'Neural F · warm'], ['en-US-Neural2-D', 'Neural D · steady'], ['en-US-Neural2-C', 'Neural C · bright']]
+};
+const VOICE_PROVIDERS = { 'openai-tts': 'OpenAI TTS', 'minimax-tts': 'MiniMax TTS', 'google-cloud-tts': 'Google Cloud TTS', 'cartesia-tts': 'Cartesia' };
+const FACTOR_LABELS = { 'visual.scene': 'Scene visuals', 'visual.design': 'Visual design', 'asset.replace': 'Assets', 'narration.text': 'Narration', 'narration.voice': 'Voice', 'narration.timing': 'Voice offset', 'music.track': 'Music', 'timing.scene': 'Timing', 'caption.text': 'Captions', 'brief.content': 'Creative brief' };
+
+function settingState(job) { const s = job.effectiveSettings || job; return { durationSec: s.durationSec || 15, style: s.style || 'product', music: Boolean(s.music), voiceover: Boolean(s.voiceover), voiceoverProvider: s.voiceoverProvider || 'openai-tts', voiceoverVoice: s.voiceoverVoice || 'coral', voiceoverOffsetSec: Number(s.voiceoverOffsetSec) || 0, durationMode: s.durationMode === 'voiceover' ? 'voiceover' : 'fixed', composer: s.composer || 'template', provider: s.provider || '', model: s.model || '', assets: Array.isArray(s.assets) ? s.assets : (job.assets || []) }; }
+function ChangeBadge({ field, changed, factors }) { if (!changed && !factors.length) return <span className="inherit-badge">Inherited</span>; const source = factors.some(f => f.source === 'manual') ? 'Changed manually' : 'Detected'; return <span className={'change-badge ' + (source === 'Detected' ? 'detected' : 'manual')}>{source}</span>; }
 
 export default function JobDetail() {
-  const { id } = useParams();
-  const { job, loading, error, cancel } = useJob(id);
-
-  if (loading) return <p style={{ color: '#666' }}>Loading...</p>;
-  if (error) return <p style={{ color: '#ef4444' }}>Error: {error}</p>;
-  if (!job) return <p style={{ color: '#666' }}>Job not found</p>;
-
-  return (
-    <div>
-      <Link to="/" style={{ color: '#3b82f6', fontSize: 14 }}>← Back</Link>
-      <h2 style={{ margin: '16px 0 8px' }}>Job {job.id}</h2>
-      <p style={{ color: '#aaa', marginBottom: 16 }}>{job.brief}</p>
-
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16 }}>
-        <JobStatusBadge status={job.status} />
-        <span style={{ color: '#888', fontSize: 13 }}>{job.durationSec}s · {job.style}</span>
-        {['queued', 'running'].includes(job.status) && (
-          <button
-            onClick={cancel}
-            style={{
-              marginLeft: 'auto',
-              padding: '6px 14px',
-              backgroundColor: '#ef4444',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 13,
-            }}
-          >
-            Cancel
-          </button>
-        )}
-      </div>
-
-      <WorkflowGraph workflow={job.workflow} stage={job.stage} />
-      <ProgressBar stage={job.stage} progress={job.progress} startedAt={job.startedAt} />
-
-      {job.status === 'done' && (
-        <div style={{ marginTop: 16 }}>
-          <VideoPlayer jobId={job.id} />
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12 }}>
-            <a
-              href={'/api/jobs/' + job.id + '/output?download=1'}
-              style={{
-                padding: '8px 18px',
-                backgroundColor: '#3b82f6',
-                color: '#fff',
-                borderRadius: 6,
-                textDecoration: 'none',
-                fontSize: 14,
-                fontWeight: 500,
-              }}
-            >
-              ⬇ Download MP4
-            </a>
-            {job.assetsUsed && job.assetsUsed.length > 0 && (
-              <span style={{ fontSize: 13, color: '#6ee7a0' }}>
-                ✓ {job.assetsUsed.length} asset{job.assetsUsed.length > 1 ? 's' : ''} used in this video
-              </span>
-            )}
-            {job.requiredAssetsNotUsed && job.requiredAssetsNotUsed.length > 0 && (
-              <span style={{ fontSize: 13, color: '#ef4444' }} title={job.requiredAssetsNotUsed.join(', ')}>
-                ⚠ REQUIRED asset(s) missing: {job.requiredAssetsNotUsed.length}
-              </span>
-            )}
-            {job.assets && job.assets.length > 0 && (!job.assetsUsed || job.assetsUsed.length === 0) && (
-              <span style={{ fontSize: 13, color: '#fbbf24' }}>
-                ⚠ {job.assets.length} asset(s) uploaded but none referenced in the composition
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {job.status === 'failed' && (
-        <div style={{
-          marginTop: 16,
-          padding: 12,
-          backgroundColor: '#2a1a1a',
-          borderRadius: 8,
-          color: '#ef4444',
-          fontSize: 13,
-        }}>
-          {job.error}
-        </div>
-      )}
-    </div>
-  );
+  const { id } = useParams(); const navigate = useNavigate(); const { job, loading, error, cancel } = useJob(id); const { jobs } = useJobs();
+  const [instruction, setInstruction] = useState(''); const [settings, setSettings] = useState(null); const [plan, setPlan] = useState(null); const [planning, setPlanning] = useState(false); const [creating, setCreating] = useState(false); const [revisionError, setRevisionError] = useState(''); const [copied, setCopied] = useState(false); const [copiedRevision, setCopiedRevision] = useState(false); const [copiedUsedPrompt, setCopiedUsedPrompt] = useState(false); const [showOriginal, setShowOriginal] = useState(false); const [showUsedPrompt, setShowUsedPrompt] = useState(false);
+  const { models: providerModels, loading: modelsLoading, error: modelsError } = useProviderModels(settings?.provider || 'openai-codex');
+  useEffect(() => { if (job) setSettings(settingState(job)); }, [job]);
+  useEffect(() => { if (providerModels.length && !providerModels.some(m => m.id === settings?.model)) setSettings(current => current && { ...current, model: providerModels.find(m => m.default)?.id || providerModels[0].id }); }, [providerModels]);
+  const [customVoiceId, setCustomVoiceId] = useState(false);
+  const { voices: cartesiaVoices, loading: cartesiaVoicesLoading, error: cartesiaVoicesError } = useProviderVoices(settings?.voiceoverProvider === 'cartesia-tts' ? 'cartesia-tts' : null);
+  const voiceOptions = settings?.voiceoverProvider === 'cartesia-tts' ? cartesiaVoices.map(v => [v.id, v.name + (v.gender ? ` · ${v.gender}` : '')]) : (VOICES[settings?.voiceoverProvider] || VOICES['openai-tts']);
+  // Only fill in a default when there's genuinely no voice selected yet — never
+  // overwrite an inherited voice ID just because it isn't in the fetched catalog page.
+  useEffect(() => { if (settings?.voiceoverProvider === 'cartesia-tts' && !settings.voiceoverVoice && voiceOptions.length) setSettings(current => current && { ...current, voiceoverVoice: voiceOptions[0][0] }); }, [voiceOptions]);
+  useEffect(() => {
+    if (!settings || settings.voiceoverProvider !== 'cartesia-tts' || !cartesiaVoices.length) return;
+    if (settings.voiceoverVoice && !cartesiaVoices.some(v => v.id === settings.voiceoverVoice)) setCustomVoiceId(true);
+  }, [cartesiaVoices, settings?.voiceoverProvider]);
+  useEffect(() => { if (settings && !settings.voiceover && settings.durationMode === 'voiceover') setSettings(current => current && { ...current, durationMode: 'fixed' }); }, [settings?.voiceover]);
+  useEffect(() => { if (!job || job.status !== 'done' || !instruction.trim() || !settings) { setPlan(null); return undefined; } const timer = setTimeout(async () => { setPlanning(true); try { setPlan(await getRevisionPlan(job.id, { instruction, settings })); } catch (e) { setRevisionError(e.message); } finally { setPlanning(false); } }, 350); return () => clearTimeout(timer); }, [job, instruction, settings]);
+  if (loading) return <p className="muted">Loading…</p>; if (error) return <p className="detail-error">Error: {error}</p>; if (!job) return <p className="muted">Job not found</p>;
+  const rootId = job.sourceJobId || job.id; const revisions = jobs.filter(item => (item.sourceJobId || item.id) === rootId).sort((a, b) => (a.revisionNumber || 0) - (b.revisionNumber || 0)); const originalPrompt = job.originalBrief || jobs.find(item => item.id === rootId)?.originalBrief || job.brief; const parentJob = job.parentJobId ? jobs.find(item => item.id === job.parentJobId) : null; const parentPrompt = job.promptProvenance?.parentPrompt || (parentJob ? null : originalPrompt); const revisedPrompt = job.promptProvenance?.effectiveRevisionPrompt || null;
+  const changed = plan?.settingsDiff?.changedFields || []; const factors = plan?.changeSet?.factors || []; const labelFor = field => field === 'voiceoverProvider' || field === 'voiceoverVoice' ? 'narration.voice' : field === 'voiceoverOffsetSec' ? 'narration.timing' : field === 'style' ? 'visual.design' : field === 'music' ? 'music.track' : field === 'durationSec' ? 'timing.scene' : field === 'assets' ? 'asset.replace' : field === 'voiceover' ? 'narration.text' : '';
+  const update = (field, value) => setSettings(current => ({ ...current, [field]: value }));
+  const submit = async event => { event.preventDefault(); if (!instruction.trim() || !settings || (settings.voiceover && !settings.voiceoverVoice.trim())) return; setCreating(true); setRevisionError(''); try { const next = await createRevision(job.id, { changeRequest: instruction.trim(), settings, planHash: plan?.planHash }); navigate('/jobs/' + next.id); } catch (e) { setRevisionError(e.message); setCreating(false); } };
+  const copyPrompt = async () => { try { await navigator.clipboard.writeText(parentPrompt || originalPrompt); setCopied(true); setTimeout(() => setCopied(false), 1600); } catch { setRevisionError('Clipboard access failed. Select the prompt text and copy it manually.'); } };
+  const copyRevision = async () => { try { await navigator.clipboard.writeText(instruction); setCopiedRevision(true); setTimeout(() => setCopiedRevision(false), 1600); } catch { setRevisionError('Clipboard access failed. Select the revision instruction and copy it manually.'); } };
+  const copyUsedPrompt = async () => { if (!revisedPrompt) return; try { await navigator.clipboard.writeText(revisedPrompt); setCopiedUsedPrompt(true); setTimeout(() => setCopiedUsedPrompt(false), 1600); } catch { setRevisionError('Clipboard access failed. Select the revised prompt and copy it manually.'); } };
+  const stagePlan = plan?.stagePlan?.nodes || job.stagePlan?.nodes || [];
+  return <div className="revision-workspace"><Link to="/generations" className="detail-back">← All generations</Link><header className="revision-header"><div><div className="eyebrow">Generation room</div><h1>{job.revisionNumber ? `Revise Version ${job.revisionNumber}` : 'Revise original generation'}</h1><p className="muted">Everything starts inherited. Change only what you mean.</p></div><JobStatusBadge status={job.status} /></header>
+    <div className="revision-layout"><aside className="revision-preview-column"><section className="panel preview-panel"><div className="eyebrow">Preview / Output workspace</div><h2>{job.revisionNumber ? `Version ${job.revisionNumber}` : 'Original output'}</h2>{job.status === 'done' ? <><VideoPlayer jobId={job.id} /><a className="secondary-button download-button" href={getOutputUrl(job.id)} download={`cadre-crew-${job.id}.mp4`}>Download MP4</a></> : <div className="preview output-empty">Output appears here when rendering finishes.</div>}<div className="detail-meta"><span>{job.durationSec}s</span><span>{job.style || 'product'}</span><span>{job.voiceover ? 'Voiceover' : 'No voiceover'}</span></div></section><section className="panel original-prompt-panel"><button className="disclosure-button" type="button" onClick={() => setShowOriginal(v => !v)}><span>Parent prompt</span><span>{showOriginal ? '⌃' : '⌄'}</span></button>{showOriginal && <div className="original-prompt-body">{parentPrompt ? <><textarea readOnly value={parentPrompt} aria-label="Parent prompt" /><button type="button" className="secondary-button" onClick={copyPrompt}>{copied ? 'Copied ✓' : 'Copy parent prompt'}</button></> : <p className="muted">Exact parent prompt unavailable for this historical version.</p>}</div>}</section><section className="panel original-prompt-panel"><button className="disclosure-button" type="button" onClick={() => setShowUsedPrompt(v => !v)}><span>Revised prompt</span><span>{showUsedPrompt ? '⌃' : '⌄'}</span></button>{showUsedPrompt && <div className="original-prompt-body">{revisedPrompt ? <><textarea readOnly value={revisedPrompt} aria-label="Revised prompt" /><button type="button" className="secondary-button" onClick={copyUsedPrompt}>{copiedUsedPrompt ? 'Copied ✓' : 'Copy revised prompt'}</button></> : <p className="muted">Exact revised prompt unavailable for this historical version.</p>}</div>}</section><section className="panel revision-history"><div className="eyebrow">Version history</div><h2>Room versions</h2>{revisions.map(item => <Link className={'revision-row' + (item.id === job.id ? ' current' : '')} to={'/jobs/' + item.id} key={item.id}>{item.status === 'done' ? <img src={'/api/jobs/' + item.id + '/thumbnail'} alt="" className="history-thumb" /> : <span className="history-thumb history-placeholder">◌</span>}<span><strong>{item.revisionNumber ? `Version ${item.revisionNumber}` : 'Original'}</strong><small>{item.revisionReason || 'Source generation'}</small></span><JobStatusBadge status={item.status} /></Link>)}</section></aside>
+      {job.status === 'done' && settings && <main className="revision-editor"><section className="panel revision-instructions"><div className="eyebrow">Revision instructions</div><h2>What should change?</h2><p className="muted">Describe the result you want. The system will protect everything you do not mention.</p><textarea className="revision-textarea" value={instruction} onChange={e => setInstruction(e.target.value)} placeholder="Example: In Scene 2, replace the product screenshot with the uploaded image. Keep every other scene, narration, timing, and branding unchanged." rows="5" aria-label="Revision instructions" /><button type="button" className="secondary-button copy-revision-button" onClick={copyRevision} disabled={!instruction.trim()}>{copiedRevision ? 'Copied ✓' : 'Copy draft instruction'}</button></section><form onSubmit={submit} className="panel revision-editor-form"><div className="section-heading"><div><div className="eyebrow">Inherited generation settings</div><h2>Fine-tune this version</h2></div>{planning && <span className="muted planning-state">Analyzing changes…</span>}</div><div className="toolbar revision-toolbar"><label className="control-label">Duration<ChangeBadge changed={changed.includes('durationSec')} factors={factors.filter(f => f.id === 'timing.scene')} /><select className="control" value={settings.durationSec} onChange={e => update('durationSec', Number(e.target.value))} disabled={settings.voiceover && settings.durationMode === 'voiceover'}>{[10,15,30,60,90].map(v => <option value={v} key={v}>{v} seconds</option>)}</select>{settings.voiceover && settings.durationMode === 'voiceover' && <small className="muted">Estimate only — final length follows the narration</small>}</label><label className="control-label">Format<ChangeBadge changed={changed.includes('style')} factors={factors.filter(f => f.id === 'visual.design')} /><select className="control" value={settings.style} onChange={e => update('style', e.target.value)}><option value="product">Product teaser</option><option value="explainer">Explainer</option><option value="social">Social clip</option></select></label><label className="control-label">Composer<ChangeBadge changed={changed.includes('composer')} factors={factors.filter(f => f.id.startsWith('settings.composer'))} /><select className="control" value={settings.composer} onChange={e => update('composer', e.target.value)}><option value="template">Template · instant</option><option value="agent">AI composer</option></select></label></div><div className="revision-assets"><AssetUpload assets={settings.assets} onAssetsChange={updater => setSettings(current => ({ ...current, assets: typeof updater === 'function' ? updater(current.assets) : updater }))} /><ChangeBadge changed={changed.includes('assets')} factors={factors.filter(f => f.id === 'asset.replace')} /></div><div className="generation-options revision-audio"><div className="toggle-row"><label className="toggle"><input type="checkbox" checked={settings.music} onChange={e => update('music', e.target.checked)} /><span>Add music bed</span><ChangeBadge changed={changed.includes('music')} factors={factors.filter(f => f.id === 'music.track')} /></label><label className="toggle"><input type="checkbox" checked={settings.voiceover} onChange={e => update('voiceover', e.target.checked)} /><span>Add voiceover</span><ChangeBadge changed={changed.includes('voiceover')} factors={factors.filter(f => f.id === 'narration.text')} /></label>{settings.voiceover && <label className="toggle" title="Duration becomes an estimate — the final video length will match however long the narration actually takes to speak."><input type="checkbox" checked={settings.durationMode === 'voiceover'} onChange={e => update('durationMode', e.target.checked ? 'voiceover' : 'fixed')} /><span>Let voiceover set duration</span></label>}</div>{settings.voiceover && <div className="voice-grid"><label className="control-label">Voice provider<ChangeBadge changed={changed.includes('voiceoverProvider')} factors={factors.filter(f => f.id === 'narration.voice')} /><select className="control" value={settings.voiceoverProvider} onChange={e => { const provider = e.target.value; update('voiceoverProvider', provider); setCustomVoiceId(false); if (VOICES[provider]) update('voiceoverVoice', VOICES[provider][0][0]); }}>{Object.entries(VOICE_PROVIDERS).map(([v,l]) => <option value={v} key={v}>{l}</option>)}</select></label><label className="control-label">Voice<ChangeBadge changed={changed.includes('voiceoverVoice')} factors={factors.filter(f => f.id === 'narration.voice')} />{settings.voiceoverProvider === 'cartesia-tts' && <label className="custom-voice-toggle"><input type="checkbox" checked={customVoiceId} onChange={e => { const checked = e.target.checked; setCustomVoiceId(checked); if (checked) update('voiceoverVoice', ''); else if (voiceOptions.length) update('voiceoverVoice', voiceOptions[0][0]); }} /> Custom ID</label>}{customVoiceId ? <input className="control" value={settings.voiceoverVoice} onChange={e => update('voiceoverVoice', e.target.value)} placeholder="Paste a Cartesia voice ID…" aria-label="Custom Cartesia voice ID" /> : <select className="control" value={settings.voiceoverVoice} onChange={e => update('voiceoverVoice', e.target.value)} disabled={settings.voiceoverProvider === 'cartesia-tts' && (cartesiaVoicesLoading || !voiceOptions.length)}>{settings.voiceoverProvider === 'cartesia-tts' && cartesiaVoicesLoading ? <option>Loading voices…</option> : voiceOptions.length ? voiceOptions.map(([v,l]) => <option value={v} key={v}>{l}</option>) : <option>No voices available</option>}</select>}{settings.voiceoverProvider === 'cartesia-tts' && cartesiaVoicesError && <span className="error">{cartesiaVoicesError}</span>}</label><label className="control-label">Voice offset (s)<ChangeBadge changed={changed.includes('voiceoverOffsetSec')} factors={factors.filter(f => f.id === 'narration.timing')} /><input type="number" step="0.1" min="-5" max="5" className="control" value={settings.voiceoverOffsetSec} onChange={e => update('voiceoverOffsetSec', Number(e.target.value))} title="Negative = voice starts earlier. Positive = voice starts later. Fine-tune sync without regenerating the video." /></label></div>}</div>{(settings.composer === 'agent' || settings.provider || settings.model) && <details className="advanced-settings"><summary>Advanced AI settings</summary><div className="provider-row"><label className="control-label">AI provider<ChangeBadge changed={changed.includes('provider')} factors={[]} /><select className="control" value={settings.provider} onChange={e => { const provider = e.target.value; setSettings(current => ({ ...current, provider, model: '' })); }}><option value="openai-codex">OpenAI Codex</option><option value="opencode">OpenCode</option></select></label><label className="control-label">Model<ChangeBadge changed={changed.includes('model')} factors={[]} /><select className="control" value={settings.model} onChange={e => update('model', e.target.value)} disabled={modelsLoading || !providerModels.length}>{modelsLoading ? <option>Loading models…</option> : providerModels.length ? providerModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>) : <option>No models available</option>}</select>{modelsError && <span className="error">{modelsError}</span>}</label></div></details>}{plan && <section className="impact-panel"><div className="eyebrow">Revision impact</div><h2>{factors.length} factor{factors.length === 1 ? '' : 's'} involved</h2><div className="factor-list">{factors.map(f => <span className="factor-chip" key={f.id}>{FACTOR_LABELS[f.id] || f.id}<small>{f.source === 'manual' ? 'manual' : 'from instruction'}</small></span>)}</div>{plan.revisionTargets?.length > 0 && <div className="resolved-targets"><strong>Resolved targets</strong><p>{plan.revisionTargets.map(target => target.kind).join(' · ')}</p></div>}{plan.assetBindings?.length > 0 && <div className="resolved-targets"><strong>Required asset bindings</strong><p>{plan.assetBindings.map(binding => `${binding.filename} → ${binding.targetKind}`).join(' · ')}</p></div>}<div className="stage-impact"><div><strong>Will rerun</strong><p>{stagePlan.filter(n => n.action === 'rerun').map(n => n.id).join(' · ') || 'Nothing'}</p></div><div><strong>Will reuse</strong><p>{stagePlan.filter(n => n.action === 'reuse').map(n => n.id).join(' · ') || 'Nothing'}</p></div></div>{plan.changeSet.ambiguities?.map(a => <p className="warning" key={a}>Review: {a}</p>)}</section>}<button className="primary generate-button" type="submit" disabled={creating || planning || !instruction.trim() || !plan || (settings.voiceover && !settings.voiceoverVoice.trim())}>{creating ? 'Creating version…' : `Create Version ${(job.revisionNumber || 0) + 1} ↗`}</button>{revisionError && <p className="detail-error">{revisionError}</p>}</form></main>}
+      {job.status !== 'done' && <main className="revision-editor"><WorkflowGraph workflow={job.workflow} stage={job.stage} jobStatus={job.status} /></main>}</div>{['queued','running'].includes(job.status) && <button className="cancel-button" onClick={cancel}>Cancel generation</button>}{job.status === 'done' && <WorkflowGraph workflow={job.workflow} stage={job.stage} jobStatus={job.status} />}<ProgressBar stage={job.stage} progress={job.progress} startedAt={job.startedAt} finishedAt={job.finishedAt} /></div>;
 }

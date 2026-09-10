@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node src/index.js",
     "start:node22": "nvm use && node src/index.js",
-    "test": "NODE_ENV=test node --test src/*.test.js",
+    "test": "NODE_ENV=test node --test",
     "render": "nvm use && npx hyperframes render"
   },
   "dependencies": {

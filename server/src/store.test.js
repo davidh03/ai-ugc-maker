@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadJobs, saveJobs, upsertJob } from './store.js';
+import { loadJobs, saveJobs, upsertJob, deleteJob } from './store.js';
 import { mkdirSync, rmSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { writeFileSync } from 'node:fs';
@@ -40,6 +40,21 @@ describe('store', () => {
     upsertJob({ id: 'x', status: 'queued' });
     upsertJob({ id: 'x', status: 'running' });
     assert.equal(loadJobs()[0].status, 'running');
+  });
+
+  it('deleteJob removes the matching job and returns true', () => {
+    upsertJob({ id: 'x', status: 'done' });
+    upsertJob({ id: 'y', status: 'done' });
+    const removed = deleteJob('x');
+    assert.equal(removed, true);
+    assert.deepEqual(loadJobs().map(j => j.id), ['y']);
+  });
+
+  it('deleteJob returns false and leaves the file unchanged when the id is unknown', () => {
+    upsertJob({ id: 'x', status: 'done' });
+    const removed = deleteJob('missing');
+    assert.equal(removed, false);
+    assert.deepEqual(loadJobs().map(j => j.id), ['x']);
   });
 
   it('migrates older URL jobs to show the research node without claiming it ran', () => {

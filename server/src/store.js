@@ -43,3 +43,11 @@ export function upsertJob(job) {
   if (i === -1) jobs.unshift(job); else jobs[i] = job;
   saveJobs(jobs);
 }
+
+export function deleteJob(id) {
+  const jobs = loadJobs();
+  const next = jobs.filter(j => j.id !== id);
+  if (next.length === jobs.length) return false;
+  saveJobs(next);
+  return true;
+}

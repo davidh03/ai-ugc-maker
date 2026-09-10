@@ -1,8 +1,17 @@
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export const presets = {
   product: {
     name: 'Product Teaser',
     durationSec: 15,
-    html: (brief, durationSec) => `<!DOCTYPE html>
+    html: (brief, durationSec) => { const safeBrief = escapeHtml(brief); return `<!DOCTYPE html>
 <html>
 <head>
 <style>
@@ -16,8 +25,8 @@ export const presets = {
 <body>
   <div class=clip data-composition-id=product data-width=1920 data-height=1080 data-track-index=0 data-start=0 data-duration=${durationSec}>
     <div class=text>
-      ${brief}
-      <div class=tagline>${brief}</div>
+      ${safeBrief}
+      <div class=tagline>${safeBrief}</div>
     </div>
   </div>
   <script>
@@ -25,13 +34,13 @@ export const presets = {
     window.__timelines['product'] = { duration: ${durationSec}, fps: 30 };
   </script>
 </body>
-</html>`
+</html>`; }
   },
 
   explainer: {
     name: 'Explainer',
     durationSec: 30,
-    html: (brief, durationSec) => `<!DOCTYPE html>
+    html: (brief, durationSec) => { const safeBrief = escapeHtml(brief); return `<!DOCTYPE html>
 <html>
 <head>
 <style>
@@ -46,8 +55,8 @@ export const presets = {
 <body>
   <div class=clip data-composition-id=explainer data-width=1920 data-height=1080 data-track-index=0 data-start=0 data-duration=${durationSec}>
     <div class=content>
-      <div class=title>${brief}</div>
-      <div class=body>${brief}</div>
+      <div class=title>${safeBrief}</div>
+      <div class=body>${safeBrief}</div>
     </div>
   </div>
   <script>
@@ -55,13 +64,13 @@ export const presets = {
     window.__timelines['explainer'] = { duration: ${durationSec}, fps: 30 };
   </script>
 </body>
-</html>`
+</html>`; }
   },
 
   social: {
     name: 'Social Clip',
     durationSec: 15,
-    html: (brief, durationSec) => `<!DOCTYPE html>
+    html: (brief, durationSec) => { const safeBrief = escapeHtml(brief); return `<!DOCTYPE html>
 <html>
 <head>
 <style>
@@ -73,13 +82,13 @@ export const presets = {
 </head>
 <body>
   <div class=clip data-composition-id=social data-width=1080 data-height=1920 data-track-index=0 data-start=0 data-duration=${durationSec}>
-    <div class=text>${brief}</div>
+    <div class=text>${safeBrief}</div>
   </div>
   <script>
     window.__timelines = window.__timelines || {};
     window.__timelines['social'] = { duration: ${durationSec}, fps: 30 };
   </script>
 </body>
-</html>`
+</html>`; }
   },
 };

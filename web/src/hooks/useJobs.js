@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getJobs, postJob } from '../api/client';
+import { getJobs, postJob, deleteJob as apiDeleteJob } from '../api/client';
 
 export function useJobs() {
   const [jobs, setJobs] = useState([]);
@@ -22,6 +22,11 @@ export function useJobs() {
     return job;
   }, []);
 
+  const removeJob = useCallback(async (id) => {
+    await apiDeleteJob(id);
+    setJobs(prev => prev.filter(job => job.id !== id));
+  }, []);
+
   useEffect(() => { refresh(); }, [refresh]);
 
   // Poll while any job is active
@@ -32,5 +37,5 @@ export function useJobs() {
     return () => clearInterval(interval);
   }, [jobs, refresh]);
 
-  return { jobs, loading, createJob, refresh };
+  return { jobs, loading, createJob, removeJob, refresh };
 }

@@ -8,3 +8,5 @@ describe('workflow', () => {
   it('enables voiceover only when selected', () => { assert.equal(createWorkflow({ voiceover: false }).find(n => n.id === 'voiceover').status, 'skipped'); assert.equal(createWorkflow({ voiceover: true }).find(n => n.id === 'voiceover').enabled, true); });
   it('tracks the active stage and completes the previous node', () => { let flow = createWorkflow({ music: true }); flow = updateWorkflow(flow, 'composing', { status: 'running' }); assert.equal(flow.find(n => n.id === 'compose').status, 'running'); flow = updateWorkflow(flow, 'linting', { status: 'running' }); assert.equal(flow.find(n => n.id === 'compose').status, 'done'); assert.equal(flow.find(n => n.id === 'lint').status, 'running'); });
 });
+
+describe('reused workflow stages', () => { it('marks an inherited stage as reused', () => { const workflow = createWorkflow({ voiceover: true }); const next = updateWorkflow(workflow, 'voiceover', { status: 'reused' }); assert.equal(next.find(node => node.id === 'voiceover').status, 'reused'); }); });

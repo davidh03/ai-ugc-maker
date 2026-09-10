@@ -3,10 +3,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { createJob } from './jobs.js';
-import { loadJobs, upsertJob } from './store.js';
+import { createJob, createRevision } from './jobs.js';
+import { buildChangeSet } from './revisionChangeSet.js';
+import { planRevision } from './revisionPlanner.js';
+import { resolveRevisionTargets } from './revisionTargetResolver.js';
+import { buildAssetBindings } from './revisionAssetBindings.js';
+import { loadJobs, upsertJob, deleteJob } from './store.js';
 import { runJob, cancelJob } from './jobRunner.js';
 import { providersRouter } from './routes/providers.js';
 import { stop as stopCodex } from './providers/codexProvider.js';
@@ -58,10 +62,11 @@ app.get('/api/models', async (_req, res) => {
 app.post('/api/assets', express.raw({ type: '*/*', limit: '50mb' }), (req, res) => {
   try {
     const filename = req.headers['x-filename'] || 'upload';
-    const category = req.headers['x-category'] || 'other'; // image, video, music, other
+    const ASSET_CATEGORIES = ['image', 'video', 'music', 'other'];
+    const requestedCategory = req.headers['x-category'] || 'other';
+    const category = ASSET_CATEGORIES.includes(requestedCategory) ? requestedCategory : 'other';
     const required = String(req.headers['x-required'] ?? 'true').toLowerCase() !== 'false'; // default: REQUIRED
     const id = crypto.randomUUID().slice(0, 8);
-    const ext = path.extname(filename);
     const safeName = `${id}-${filename.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     const assetDir = path.join(ASSETS_DIR, category);
     mkdirSync(assetDir, { recursive: true });
@@ -114,6 +119,43 @@ app.post('/api/jobs', (req, res) => {
 
 app.get('/api/jobs', (_req, res) => { res.json(loadJobs()); });
 
+app.post('/api/jobs/:id/revision-plan', (req, res) => {
+  try {
+    const parent = loadJobs().find(job => job.id === req.params.id);
+    if (!parent) return res.status(404).json({ error: 'not found' });
+    const instruction = req.body?.instruction || req.body?.changeRequest;
+    const settings = req.body?.settings || {};
+    const changeSet = buildChangeSet(parent, instruction, settings);
+    const sourcePath = path.join(config.dataDir, 'jobs', parent.id, 'index.html');
+    const sourceHtml = existsSync(sourcePath) ? readFileSync(sourcePath, 'utf8') : '';
+    const revisionTargets = resolveRevisionTargets(instruction, sourceHtml, settings.durationSec || parent.durationSec);
+    const assetBindings = buildAssetBindings(changeSet.settingsDiff.after.assets, revisionTargets);
+    const stagePlan = planRevision(parent, changeSet);
+    const plan = { sourceJobId: parent.id, baselineVersion: parent.revisionNumber || 0, settingsDiff: changeSet.settingsDiff, changeSet, revisionTargets, assetBindings, stagePlan, planHash: Buffer.from(JSON.stringify({ parent: parent.id, instruction: instruction.trim(), settings: changeSet.settingsDiff.after })).toString('base64url') };
+    res.json(plan);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.post('/api/jobs/:id/revisions', (req, res) => {
+  try {
+    const jobs = loadJobs();
+    const parent = jobs.find(job => job.id === req.params.id);
+    if (!parent) return res.status(404).json({ error: 'not found' });
+    const sourceJobId = parent.sourceJobId || parent.id;
+    const revisionNumber = jobs.filter(job => (job.sourceJobId || job.id) === sourceJobId).reduce((max, job) => Math.max(max, Number(job.revisionNumber) || 0), 0) + 1;
+    const settings = req.body?.settings || req.body;
+    const sourcePath = path.join(config.dataDir, 'jobs', parent.id, 'index.html');
+    const sourceHtml = existsSync(sourcePath) ? readFileSync(sourcePath, 'utf8') : '';
+    const instruction = req.body?.changeRequest || req.body?.instruction;
+    const revisionTargets = resolveRevisionTargets(instruction, sourceHtml, settings.durationSec || parent.durationSec);
+    const assetBindings = buildAssetBindings(settings.assets || parent.assets || [], revisionTargets);
+    const job = createRevision(parent, { ...req.body, settings, revisionTargets, assetBindings }, revisionNumber);
+    upsertJob(job);
+    runJob(job).catch(err => console.error('Revision render failed:', err));
+    res.status(201).json(job);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
 app.get('/api/jobs/:id', (req, res) => {
   const job = loadJobs().find(j => j.id === req.params.id);
   if (!job) return res.status(404).json({ error: 'not found' });
@@ -132,6 +174,19 @@ app.get('/api/jobs/:id/output', (req, res) => {
   res.sendFile(file);
 });
 
+app.get('/api/jobs/:id/thumbnail', async (req, res) => {
+  const job = loadJobs().find(j => j.id === req.params.id);
+  if (!job || !job.outputRel) return res.status(404).json({ error: 'no output yet' });
+  const file = path.join(config.dataDir, job.outputRel);
+  const thumbnail = path.join(config.dataDir, 'jobs', job.id, 'thumbnail.jpg');
+  if (!existsSync(file)) return res.status(404).json({ error: 'output file missing' });
+  try {
+    if (!existsSync(thumbnail)) await execFileP('ffmpeg', ['-y', '-ss', '0.5', '-i', file, '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', thumbnail]);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.sendFile(thumbnail);
+  } catch (err) { res.status(500).json({ error: 'thumbnail generation failed', detail: String(err.message || err).slice(0, 160) }); }
+});
+
 app.post('/api/jobs/:id/cancel', (req, res) => {
   const jobs = loadJobs();
   const job = jobs.find(j => j.id === req.params.id);
@@ -142,6 +197,21 @@ app.post('/api/jobs/:id/cancel', (req, res) => {
   job.finishedAt = Date.now();
   upsertJob(job);
   res.json(job);
+});
+
+app.delete('/api/jobs/:id', (req, res) => {
+  try {
+    const jobs = loadJobs();
+    const job = jobs.find(j => j.id === req.params.id);
+    if (!job) return res.status(404).json({ error: 'not found' });
+    if (['queued', 'running'].includes(job.status)) return res.status(400).json({ error: 'cannot delete an active generation; cancel it first' });
+    const dependents = jobs.filter(j => j.parentJobId === job.id);
+    if (dependents.length) return res.status(400).json({ error: `cannot delete: ${dependents.length} revision(s) depend on this version` });
+    deleteJob(job.id);
+    try { rmSync(path.join(config.dataDir, 'jobs', job.id), { recursive: true, force: true }); }
+    catch (e) { console.warn('failed to remove job directory:', e.message); }
+    res.json({ ok: true });
+  } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));

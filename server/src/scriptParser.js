@@ -11,15 +11,22 @@ export function parseTimecode(value) {
 }
 
 function section(block, name, nextNames) {
-  const start = block.search(new RegExp(`(?:^|\\n)${name}\\s*:?\\s*\\n`, 'i'));
+  const start = block.search(new RegExp(`(?:^|\n)${name}\\s*:?\\s*\n`, 'i'));
   if (start < 0) return '';
-  const marker = block.slice(start).match(new RegExp(`${name}\\s*:?\\s*\\n`, 'i'));
+  const marker = block.slice(start).match(new RegExp(`${name}\\s*:?\\s*\n`, 'i'));
   if (!marker) return '';
   const bodyStart = start + marker[0].length;
   const rest = block.slice(bodyStart);
-  const next = rest.search(new RegExp(`\\n(?:${nextNames.join('|')})\\s*\\n`, 'i'));
+  const boundary = nextNames.join('|');
+  const next = rest.search(new RegExp(`\n(?:${boundary})\\s*:?\\s*(?:\n|$)`, 'i'));
   return (next >= 0 ? rest.slice(0, next) : rest).replace(/\n+/g, ' ').trim();
 }
+
+function cleanVoiceover(value) {
+  const text = String(value || '').replace(/[“”]/g, '"').trim();
+  return /^none(?:[.!]?|\s*\([^)]*\))$/i.test(text) ? '' : text;
+}
+
 
 export function parsePresentationScript(input = '') {
   const text = String(input).replace(/\r/g, ' ');
@@ -28,9 +35,9 @@ export function parsePresentationScript(input = '') {
     const start = header.index + header[1].length; const end = headers[index + 1]?.index ?? text.length;
     const block = text.slice(start, end); const timing = parseTimecode(header[3]);
     if (!timing) return null;
-    const voiceover = section(block, 'Voiceover', ['Visual', 'On Screen', 'Voiceover']);
+    const voiceover = cleanVoiceover(section(block, 'Voiceover', ['Visual', 'On Screen', 'On[- ]screen(?:\\s+text)?', 'Voiceover', 'Audio', 'Overall visual direction', 'Use', 'Avoid']));
     const visual = section(block, 'Visual', ['On Screen', 'Voiceover', 'Visual']);
-    const onScreen = block.match(/(?:^|\n)On Screen:\s*(?:\n\s*)?([^\n]+)/i)?.[1]?.trim() || '';
+    const onScreen = block.match(/(?:^|\n)On[- ]screen(?:\s+text)?\s*:\s*(?:\n\s*)?([^\n]+)/i)?.[1]?.trim() || '';
     return voiceover ? { title: header[2].trim(), ...timing, visual, onScreen, voiceover: voiceover.replace(/[“”]/g, '"') } : null;
   }).filter(Boolean);
   return { scenes, script: scenes.map(scene => scene.voiceover).join(' ').replace(/\s+/g, ' ').trim(), detected: scenes.length > 0 };

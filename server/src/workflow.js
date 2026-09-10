@@ -7,13 +7,13 @@ export const WORKFLOW_NODES = [
   { id: 'voiceover', label: 'Generate voiceover', required: false },
   { id: 'lint', label: 'Validate composition', required: true },
   { id: 'render', label: 'Render video', required: true },
-  { id: 'music', label: 'Mix music bed', required: false },
+  { id: 'music', label: 'Mix audio', required: false },
   { id: 'complete', label: 'Ready to review', required: true },
 ];
 
 export function createWorkflow({ music = false, voiceover = false, assets = [], urls = false, optimize = false } = {}) {
   return WORKFLOW_NODES.map((node, index) => {
-    const enabled = node.required || (node.id === 'music' ? Boolean(music) : node.id === 'voiceover' ? Boolean(voiceover) : node.id === 'asset-analysis' ? assets.length > 0 : node.id === 'web-research' ? Boolean(urls) : node.id === 'prompt-optimizer' ? Boolean(optimize) : true);
+    const enabled = node.required || (node.id === 'music' ? Boolean(music || voiceover) : node.id === 'voiceover' ? Boolean(voiceover) : node.id === 'asset-analysis' ? assets.length > 0 : node.id === 'web-research' ? Boolean(urls) : node.id === 'prompt-optimizer' ? Boolean(optimize) : true);
     return { ...node, order: index, enabled, status: enabled ? (index === 0 ? 'done' : 'pending') : 'skipped', startedAt: null, finishedAt: null, error: null };
   });
 }
@@ -30,6 +30,7 @@ export function updateWorkflow(workflow = [], stage, patch = {}) {
   if (previous) { previous.status = 'done'; previous.finishedAt = Date.now(); }
   if (patch.status === 'running') { next[index].status = 'running'; next[index].startedAt ||= Date.now(); }
   if (patch.status === 'done') { next[index].status = 'done'; next[index].finishedAt = Date.now(); }
+  if (patch.status === 'reused') { next[index].status = 'reused'; next[index].finishedAt = Date.now(); }
   if (patch.status === 'failed') { next[index].status = 'failed'; next[index].error = patch.error || null; }
   return next;
 }

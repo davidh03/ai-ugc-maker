@@ -4,19 +4,17 @@ import { useState, useEffect, useRef } from 'react';
 // real % — show an indeterminate bar + elapsed time instead of a fake 0%.
 const STAGE_WEIGHT = { composing: 5, linting: 70, rendering: 75, encoding: 95 };
 
-export default function ProgressBar({ stage, progress, startedAt }) {
+export default function ProgressBar({ stage, progress, startedAt, finishedAt }) {
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef(startedAt || Date.now());
   useEffect(() => {
     startRef.current = startedAt || Date.now();
+    if (finishedAt) { setElapsed(Math.max(0, Math.floor((finishedAt - startRef.current) / 1000))); return; }
     const iv = setInterval(() => setElapsed(Math.floor((Date.now() - startRef.current) / 1000)), 1000);
     return () => clearInterval(iv);
-  }, [stage, startedAt]);
+  }, [stage, startedAt, finishedAt]);
 
-  if (!stage) {
-    if (elapsed === 0) return null;
-    return null;
-  }
+  if (!stage) return null;
 
   const base = STAGE_WEIGHT[stage] ?? 0;
   // composing: show subtle progress within [0..70) so it never looks frozen
