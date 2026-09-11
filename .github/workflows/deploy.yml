@@ -61,27 +61,51 @@ jobs:
           ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
           INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
-          # Read the tag currently running before we touch anything, so a
+          # Runs one shell command on the instance via SSM and waits for it
+          # to actually finish (send-command + wait command-executed is not
+          # enough on its own — that only waits for a terminal state, it
+          # doesn't check *which* one, so a failed command was previously
+          # sailing through silently as step success). Prints the instance's
+          # own stdout/stderr and fails the GitHub Actions step for real.
+          # Debug/status goes to stderr; only the instance's real stdout goes
+          # to this function's stdout, so `out=$(run_on_instance ...)` works.
+          run_on_instance() {
+            local cmd_id status out
+            cmd_id=$(aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name "AWS-RunShellScript" \
+              --parameters "commands=[\"$1\"]" --query "Command.CommandId" --output text)
+            aws ssm wait command-executed --command-id "$cmd_id" --instance-id "$INSTANCE_ID" 2>/dev/null || true
+            status=$(aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$INSTANCE_ID" --query "Status" --output text)
+            out=$(aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$INSTANCE_ID" --query "StandardOutputContent" --output text)
+            echo "--- [$status] $1" >&2
+            echo "$out" >&2
+            if [ "$status" != "Success" ]; then
+              aws ssm get-command-invocation --command-id "$cmd_id" --instance-id "$INSTANCE_ID" --query "StandardErrorContent" --output text >&2
+              return 1
+            fi
+            echo "$out"
+          }
+
+          # Read the image currently running before we touch anything, so a
           # failed health check below has something concrete to roll back
           # to — not just "latest", which by the time we'd need it will
-          # already point at the broken build.
-          PREVIOUS_TAG=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["docker inspect --format \"{{index .Config.Labels \\\"deploy.image_tag\\\"}}\" $(docker compose -f /opt/ai-ugc-maker/deploy/docker-compose.production.yml ps -q app) 2>/dev/null || echo none"]' \
-            --query "Command.CommandId" --output text)
-          sleep 5
-          PREVIOUS_TAG_VALUE=$(aws ssm get-command-invocation --command-id "$PREVIOUS_TAG" --instance-id "$INSTANCE_ID" --query "StandardOutputContent" --output text | tr -d '[:space:]')
+          # already point at the broken build. No previous deployment yet
+          # is expected on a fresh instance (empty output), not an error —
+          # {{.Config.Image}} avoids the nested-quote mess of reading the
+          # deploy.image_tag label directly through three layers of shell.
+          PREVIOUS_IMAGE=$(run_on_instance 'docker inspect --format {{.Config.Image}} $(cd /opt/ai-ugc-maker && docker compose -f deploy/docker-compose.production.yml ps -q app) 2>/dev/null' | tr -d '[:space:]')
+          PREVIOUS_TAG_VALUE="${PREVIOUS_IMAGE##*:}"
           echo "previous_tag=${PREVIOUS_TAG_VALUE:-none}" >> "$GITHUB_OUTPUT"
 
           IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          DEPLOY_CMD=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --parameters "commands=[\"cd /opt/ai-ugc-maker && IMAGE=$IMAGE IMAGE_TAG=$IMAGE_TAG docker compose -f deploy/docker-compose.production.yml pull && IMAGE=$IMAGE IMAGE_TAG=$IMAGE_TAG docker compose -f deploy/docker-compose.production.yml up -d\"]" \
-            --query "Command.CommandId" --output text)
-          aws ssm wait command-executed --command-id "$DEPLOY_CMD" --instance-id "$INSTANCE_ID" || true
+          # git pull first: deploy/docker-compose.production.yml or Caddyfile
+          # can change between deploys, and `docker compose` on the instance
+          # reads whatever's on disk there, not what's in this checkout.
+          run_on_instance "cd /opt/ai-ugc-maker && git fetch --depth 1 origin main && git reset --hard origin/main"
+          run_on_instance "aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY"
+          run_on_instance "cd /opt/ai-ugc-maker && IMAGE=$IMAGE IMAGE_TAG=$IMAGE_TAG docker compose -f deploy/docker-compose.production.yml pull"
+          run_on_instance "cd /opt/ai-ugc-maker && IMAGE=$IMAGE IMAGE_TAG=$IMAGE_TAG docker compose -f deploy/docker-compose.production.yml up -d"
 
       - name: Health check the new deployment
         id: health

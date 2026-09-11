@@ -18,11 +18,6 @@ services:
     # compose pull`/`up` (no --build) pulls that exact image instead.
     image: ${IMAGE:-ai-ugc-maker:local}
     restart: unless-stopped
-    # Read back by .github/workflows/deploy.yml before rolling a new tag
-    # out, so a failed health check has a concrete previous tag to roll
-    # back to instead of guessing at "latest".
-    labels:
-      - "deploy.image_tag=${IMAGE_TAG:-local}"
     ports:
       - "127.0.0.1:8787:8787"
     env_file:
@@ -51,5 +46,26 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # No real domain yet -> Caddyfile falls back to plain HTTP on the bare
+      # IP (Caddy's automatic HTTPS only activates for an actual domain name).
+      # Set this once DNS points at the instance's Elastic IP to get HTTPS
+      # for free.
+      DOMAIN: ${DOMAIN:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+
 volumes:
   app-data:
+  caddy-data:
+  caddy-config:
