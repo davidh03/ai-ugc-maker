@@ -64,3 +64,7 @@ chown ubuntu:ubuntu /opt/ai-ugc-maker
 # do their own `git fetch && git reset --hard` before every deploy — this
 # clone just needs to exist once so that has something to reset.
 sudo -u ubuntu git clone --depth 1 https://github.com/davidh03/ai-ugc-maker.git /opt/ai-ugc-maker
+# Without this, every future deploy's git command run as root against a
+# clone owned by `ubuntu` fails: "detected dubious ownership in repository".
+# --system (not --global) because SSM's root shell has no $HOME set.
+git config --system --add safe.directory /opt/ai-ugc-maker
