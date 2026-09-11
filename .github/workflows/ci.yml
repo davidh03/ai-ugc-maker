@@ -17,6 +17,13 @@ jobs:
           node-version: "22"
           cache: npm
 
+      # aiReviewer.test.js and assetAnalyzer.test.js shell out to real
+      # ffmpeg/ffprobe/ImageMagick `identify` against fixture media — ubuntu-latest
+      # doesn't have these by default. Found by an actual failing run on
+      # GitHub (spawnSync ffmpeg ENOENT), not by reading the Dockerfile.
+      - name: Install ffmpeg + ImageMagick
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg imagemagick
+
       - name: Install root deps
         run: npm ci
 
