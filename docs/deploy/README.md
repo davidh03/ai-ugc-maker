@@ -1,8 +1,10 @@
 # Deployment runbook
 
-Implements Phase 1 (production-readiness audit) and scaffolds Phases 2–5 of
-[`docs/plans/aws-production-hosting-cicd.md`](../plans/aws-production-hosting-cicd.md).
-Read that plan first — this doc is the "how", not the "why".
+Implements and actually runs Phases 1–5 of
+[`docs/plans/aws-production-hosting-cicd.md`](../plans/aws-production-hosting-cicd.md) —
+the app is live at a real AWS instance, deployed by a working CI/CD
+pipeline. Read that plan first — this doc is the "how", not the "why".
+Phase 6 (the durable-scaling refactor) has not been started.
 
 ## What has and hasn't been validated
 
@@ -61,17 +63,27 @@ same way):
   3. Data-volume persistence across `docker stop`/`start` (with a real named
      volume, not a bind mount) was also confirmed directly.
 
-**Still not tested** (no AWS resources exist yet):
-- `.github/workflows/deploy.yml` — cannot run until Phase 3's AWS resources
-  (ECR repo, EC2 instance with the SSM agent, an OIDC IAM role) exist. It's
-  gated off (`vars.AWS_DEPLOY_ENABLED`) specifically so it doesn't fail on
-  every push in the meantime. Expect to debug the SSM shell-escaping the
-  first time it actually runs against a real instance.
-- `deploy/Caddyfile` (TLS/reverse-proxy behavior specifically — the app
-  behind it is now verified).
-- Load/duration behavior on a real longer render (only a 6s template-composer
-  video was tested here) — re-check the `shm_size: 2gb` guess in
-  `docker-compose.production.yml` once you've measured one.
+**Phase 3–5 — provisioned and actually run against real AWS** (see
+`docs/deploy/aws-resources.md` for the full resource inventory, cost, and
+teardown commands):
+- `.github/workflows/deploy.yml` ran push→CI→build→push-to-ECR→SSM
+  deploy→health-check end to end against the real EC2 instance, and
+  passed. Getting there surfaced four more real bugs (GitHub's OIDC `sub`
+  claim format, an environment-scoped variable invisible to a job-level
+  `if:`, the EC2 docker daemon never authenticated to ECR, and a silently-
+  swallowed SSM failure) — all fixed, all documented in
+  `docs/deploy/aws-resources.md`'s "Real bugs" section rather than repeated
+  here.
+- A real job was created and rendered through the public endpoint
+  (`http://<the Elastic IP>/api/jobs` → poll → `.../output`), producing a
+  genuine 1920×1080 6s MP4, then deleted (it was just the smoke test).
+- `deploy/Caddyfile` is running and proxying the app — over plain HTTP on
+  the bare IP, since no domain exists yet (TLS itself is therefore still
+  untested; the app behind it is not).
+- Load/duration behavior on a real longer render is still untested (only
+  6–15s template-composer videos were tried) — the instance-sizing
+  rationale (t3.small + swap) in `docs/deploy/aws-resources.md` is based on
+  those measurements, not a worst-case one.
 
 ## Not done (explicitly out of scope for this pass)
 
